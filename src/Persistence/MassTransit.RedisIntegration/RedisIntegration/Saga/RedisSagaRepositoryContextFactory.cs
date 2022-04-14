@@ -1,6 +1,9 @@
 namespace MassTransit.RedisIntegration.Saga
 {
     using System;
+    using System.Collections.Generic;
+    using System.Linq;
+    using System.Linq.Expressions;
     using System.Threading;
     using System.Threading.Tasks;
     using MassTransit.Saga;
@@ -67,7 +70,35 @@ namespace MassTransit.RedisIntegration.Saga
         public async Task SendQuery<T>(ConsumeContext<T> context, ISagaQuery<TSaga> query, IPipe<SagaRepositoryQueryContext<TSaga, T>> next)
             where T : class
         {
-            throw new NotImplementedByDesignException("Redis saga repository does not support queries");
+            var body = query.FilterExpression.Body;
+            var binaryExpression = body as BinaryExpression;
+
+            if (binaryExpression != null && binaryExpression.Right is ConstantExpression right)
+            {
+                var redisKey = right.Value.ToString();
+
+                var database = _databaseFactory();
+                var databaseContext = new RedisDatabaseContext<TSaga>(database, _options);
+                var instances = new List<TSaga>();
+
+                var redisEntry = await databaseContext.Load(redisKey);
+                var sagas = new IndexedSagaDictionary<TSaga>();
+                var factory = new InMemorySagaConsumeContextFactory<TSaga>();
+
+                if (redisEntry != null)
+                {
+                    instances.Add(redisEntry);
+                    sagas.Add(new SagaInstance<TSaga>(redisEntry));
+                }
+
+                var repositoryContext = new RedisLoadedSagaRepositoryContext<TSaga, T>(new InMemorySagaRepositoryContext<TSaga, T>(sagas, factory, context), databaseContext, context, _factory);
+                var queryContext = new DefaultSagaRepositoryQueryContext<TSaga, T>(repositoryContext, instances.Select(x => x.CorrelationId).ToList());
+                await next.Send(queryContext).ConfigureAwait(false);
+            }
+            else
+            {
+                throw new NotImplementedByDesignException("Redis saga repository does not support queries");
+            }
         }
 
         public async Task<T> Execute<T>(Func<SagaRepositoryContext<TSaga>, Task<T>> asyncMethod, CancellationToken cancellationToken = default)

@@ -38,6 +38,11 @@ namespace MassTransit
             return KeyPrefix != null ? $"{KeyPrefix}{correlationId}" : correlationId.ToString();
         }
 
+        public string FormatSagaKey(string redisKey)
+        {
+            return KeyPrefix != null ? $"{KeyPrefix}{redisKey}" : redisKey;
+        }
+
         public string FormatLockKey(Guid correlationId)
         {
             return LockSuffix != null

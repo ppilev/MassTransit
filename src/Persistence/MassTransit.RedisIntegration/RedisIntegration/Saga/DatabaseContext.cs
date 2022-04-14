@@ -14,6 +14,8 @@ namespace MassTransit.RedisIntegration.Saga
 
         Task<TSaga> Load(Guid correlationId);
 
+        Task<TSaga> Load(string redisKey);
+
         Task Update(SagaConsumeContext<TSaga> context);
 
         Task Delete(SagaConsumeContext<TSaga> context);

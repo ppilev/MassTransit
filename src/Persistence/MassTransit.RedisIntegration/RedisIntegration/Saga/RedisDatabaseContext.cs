@@ -42,6 +42,11 @@ namespace MassTransit.RedisIntegration.Saga
             return Get(correlationId);
         }
 
+        public Task<TSaga> Load(string redisKey)
+        {
+            return Get(redisKey);
+        }
+
         public async Task Update(SagaConsumeContext<TSaga> context)
         {
             var instance = context.Saga;
@@ -54,7 +59,10 @@ namespace MassTransit.RedisIntegration.Saga
             {
                 instance.Version++;
 
-                var existingInstance = await Get(instance.CorrelationId).ConfigureAwait(false);
+                var existingInstance = instance is IRedisSagaKey redisSagaKey ?
+                    await Get(redisSagaKey.Key).ConfigureAwait(false) :
+                    await Get(instance.CorrelationId).ConfigureAwait(false);
+
                 if (existingInstance.Version >= instance.Version)
                     throw new RedisSagaConcurrencyException("Saga version conflict", typeof(TSaga), instance.CorrelationId);
 
@@ -111,9 +119,20 @@ namespace MassTransit.RedisIntegration.Saga
             return value.IsNullOrEmpty ? null : JsonSerializer.Deserialize<TSaga>(value, SystemTextJsonMessageSerializer.Options);
         }
 
+        public async Task<TSaga> Get(string redisKey)
+        {
+            var value = await _database.StringGetAsync(_options.FormatSagaKey(redisKey)).ConfigureAwait(false);
+
+            return value.IsNullOrEmpty ? null : JsonSerializer.Deserialize<TSaga>(value, SystemTextJsonMessageSerializer.Options);
+        }
+
         Task Put(TSaga instance)
         {
-            return _database.StringSetAsync(_options.FormatSagaKey(instance.CorrelationId),
+            var sagaKey = instance is IRedisSagaKey redisSagaKey ?
+                _options.FormatSagaKey(redisSagaKey.Key) :
+                _options.FormatSagaKey(instance.CorrelationId);
+
+            return _database.StringSetAsync(sagaKey,
                 JsonSerializer.Serialize(instance, SystemTextJsonMessageSerializer.Options), _options.Expiry);
         }
 
