@@ -23,6 +23,7 @@ namespace MassTransit.AzureServiceBusTransport.Topology
         public IServiceBusQueueConfigurator QueueConfigurator => _queueConfigurator;
 
         public override bool RequiresSession => _queueConfigurator.RequiresSession ?? false;
+        public override int MaxConcurrentCallsPerSession => _queueConfigurator.MaxConcurrentCallsPerSession ?? 1;
 
         public bool RemoveSubscriptions { get; set; }
 
@@ -31,12 +32,6 @@ namespace MassTransit.AzureServiceBusTransport.Topology
         public CreateQueueOptions GetCreateQueueOptions()
         {
             return _queueConfigurator.GetCreateQueueOptions();
-        }
-
-        public override void SelectBasicTier()
-        {
-            _queueConfigurator.AutoDeleteOnIdle = default;
-            _queueConfigurator.DefaultMessageTimeToLive = Defaults.BasicMessageTimeToLive;
         }
 
         protected override IEnumerable<string> GetQueryStringOptions()

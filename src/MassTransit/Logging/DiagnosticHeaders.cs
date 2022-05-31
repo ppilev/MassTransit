@@ -5,6 +5,7 @@ namespace MassTransit.Logging
     {
         public const string DefaultListenerName = "MassTransit";
 
+        public const string DiagnosticId = "Diagnostic-Id";
         public const string ActivityId = "MT-Activity-Id";
         public const string ActivityCorrelationContext = "MT-Activity-Correlation-Context";
 
@@ -35,6 +36,7 @@ namespace MassTransit.Logging
             public const string DestinationKind = "messaging.destination_kind";
             public const string TransportMessageId = "messaging.message_id";
             public const string Operation = "messaging.operation";
+            public const string System = "messaging.system";
 
 
             public static class RabbitMq

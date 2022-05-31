@@ -80,6 +80,11 @@
             set => _configurator.RequiresSession = value;
         }
 
+        public int MaxConcurrentCallsPerSession
+        {
+            set => _configurator.MaxConcurrentCallsPerSession = value;
+        }
+
         public string UserMetadata
         {
             set => _configurator.UserMetadata = value;
@@ -98,11 +103,6 @@
         public TimeSpan MaxAutoRenewDuration
         {
             set => _settings.MaxAutoRenewDuration = value;
-        }
-
-        public virtual void SelectBasicTier()
-        {
-            _settings.SelectBasicTier();
         }
 
         public override IEnumerable<ValidationResult> Validate()

@@ -182,14 +182,14 @@ namespace MassTransit.Configuration
             set => _queueConfigurator.RequiresSession = value;
         }
 
+        public int MaxConcurrentCallsPerSession
+        {
+            set => _queueConfigurator.MaxConcurrentCallsPerSession = value;
+        }
+
         public string UserMetadata
         {
             set => _queueConfigurator.UserMetadata = value;
-        }
-
-        public void SelectBasicTier()
-        {
-            _settings.SelectBasicTier();
         }
 
         public TimeSpan MessageWaitTimeout

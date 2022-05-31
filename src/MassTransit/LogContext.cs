@@ -49,11 +49,6 @@ namespace MassTransit
             Current = new BusLogContext(new SingleLoggerFactory(logger), Cached.Source.Value);
         }
 
-        public static EnabledScope? BeginScope()
-        {
-            return Current?.BeginScope();
-        }
-
         public static ILogContext CreateLogContext(string categoryName)
         {
             var current = Current ??= CreateDefaultLogContext();
@@ -218,16 +213,10 @@ namespace MassTransit
             return new BusLogContext(loggerFactory, source);
         }
 
-        public static EnabledActivitySource? IfEnabled(string name)
-        {
-            return Current?.IfEnabled(name);
-        }
-
 
         static class Cached
         {
-            internal static readonly Lazy<ActivitySource> Source =
-                new Lazy<ActivitySource>(() => new ActivitySource(DiagnosticHeaders.DefaultListenerName));
+            internal static readonly Lazy<ActivitySource> Source = new Lazy<ActivitySource>(() => new ActivitySource(DiagnosticHeaders.DefaultListenerName));
         }
     }
 }
