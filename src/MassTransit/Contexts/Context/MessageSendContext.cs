@@ -1,18 +1,23 @@
 namespace MassTransit.Context
 {
     using System;
+    using System.Collections.Generic;
     using System.Net.Mime;
     using System.Runtime.Serialization;
+    using System.Text;
     using System.Threading;
+    using Initializers.TypeConverters;
     using Middleware;
     using Serialization;
 
 
     public class MessageSendContext<TMessage> :
         BasePipeContext,
-        PublishContext<TMessage>
+        TransportSendContext<TMessage>
         where TMessage : class
     {
+        static readonly TimeSpanTypeConverter _timeSpanConverter = new TimeSpanTypeConverter();
+
         readonly Lazy<MessageBody> _body;
         readonly DictionarySendHeaders _headers;
 
@@ -93,9 +98,136 @@ namespace MassTransit.Context
 
         public bool Mandatory { get; set; }
 
+        public virtual void WritePropertiesTo(IDictionary<string, object> properties)
+        {
+            if (!Durable)
+                properties[PropertyNames.Durable] = false;
+            if (Mandatory)
+                properties[PropertyNames.Mandatory] = true;
+            if (Delay.HasValue)
+                properties[PropertyNames.Delay] = Delay.Value;
+        }
+
+        public virtual void ReadPropertiesFrom(IReadOnlyDictionary<string, object> properties)
+        {
+            Durable = ReadBoolean(properties, PropertyNames.Durable, true);
+            Mandatory = ReadBoolean(properties, PropertyNames.Mandatory);
+            Delay = ReadTimeSpan(properties, PropertyNames.Delay);
+        }
+
         MessageBody GetMessageBody()
         {
             return Serializer?.GetMessageBody(this) ?? throw new SerializationException("Unable to serialize message, no serializer specified.");
+        }
+
+        protected static string ReadString(IReadOnlyDictionary<string, object> properties, string key, string defaultValue = null)
+        {
+            if (properties.TryGetValue(key, out var value))
+            {
+                if (value is string text)
+                    return text;
+
+                if (value is byte[] bytes)
+                {
+                    text = Encoding.UTF8.GetString(bytes);
+                    return text;
+                }
+            }
+
+            return defaultValue;
+        }
+
+        protected static TimeSpan? ReadTimeSpan(IReadOnlyDictionary<string, object> properties, string key, TimeSpan? defaultValue = null)
+        {
+            var value = ReadString(properties, key);
+
+            if (string.IsNullOrWhiteSpace(value))
+                return defaultValue;
+
+            return _timeSpanConverter.TryConvert(value, out var result) ? result : defaultValue;
+        }
+
+        protected static T? ReadEnum<T>(IReadOnlyDictionary<string, object> properties, string key, T? defaultValue = default)
+            where T : struct
+        {
+            if (properties.TryGetValue(key, out var value))
+            {
+                if (value is string text)
+                    return Enum.TryParse<T>(text, true, out var enumValue) ? enumValue : defaultValue;
+            }
+
+            return defaultValue;
+        }
+
+        protected static byte ReadByte(IReadOnlyDictionary<string, object> properties, string key, byte defaultValue = default)
+        {
+            if (!properties.TryGetValue(key, out var value))
+                return defaultValue;
+
+            if (value is byte byteValue)
+                return byteValue;
+
+            var longValue = ReadLong(properties, key);
+
+            return longValue.HasValue ? (byte)longValue.Value : defaultValue;
+        }
+
+        protected static int? ReadInt(IReadOnlyDictionary<string, object> properties, string key, int? defaultValue = null)
+        {
+            var longValue = ReadLong(properties, key);
+
+            return longValue.HasValue ? (int)longValue.Value : defaultValue;
+        }
+
+        protected static long? ReadLong(IReadOnlyDictionary<string, object> properties, string key, long? defaultValue = null)
+        {
+            if (properties.TryGetValue(key, out var value))
+            {
+                if (value is long longValue)
+                    return longValue;
+
+                switch (value)
+                {
+                    case int intValue:
+                        return intValue;
+                    case short shortValue:
+                        return shortValue;
+                    case char charValue:
+                        return charValue;
+                }
+
+                if (value is string text)
+                    return long.TryParse(text, out longValue) ? longValue : defaultValue;
+
+                if (value is byte[] bytes)
+                {
+                    text = Encoding.UTF8.GetString(bytes);
+                    return long.TryParse(text, out longValue) ? longValue : defaultValue;
+                }
+            }
+
+            return defaultValue;
+        }
+
+        protected static bool ReadBoolean(IReadOnlyDictionary<string, object> properties, string key, bool defaultValue = default)
+        {
+            if (!properties.TryGetValue(key, out var value))
+                return defaultValue;
+
+            if (value is bool boolValue)
+                return boolValue;
+
+            var longValue = ReadLong(properties, key);
+
+            return longValue.HasValue ? longValue.Value != 0 : defaultValue;
+        }
+
+
+        static class PropertyNames
+        {
+            public const string Delay = "Delay";
+            public const string Durable = "Durable";
+            public const string Mandatory = "Mandatory";
         }
     }
 }

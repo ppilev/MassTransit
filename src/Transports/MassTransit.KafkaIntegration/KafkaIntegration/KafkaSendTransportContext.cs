@@ -1,19 +1,22 @@
 namespace MassTransit.KafkaIntegration
 {
-    using System;
+    using System.Collections.Generic;
     using System.Threading;
     using System.Threading.Tasks;
     using Transports;
 
 
     public interface KafkaSendTransportContext<TKey, TValue> :
-        SendTransportContext
+        SendTransportContext,
+        IProbeSite
         where TValue : class
     {
-        Uri HostAddress { get; }
-        KafkaTopicAddress TopicAddress { get; }
-        ISendPipe SendPipe { get; }
+        IEnumerable<IAgent> GetAgentHandles();
 
-        Task Send(IPipe<ProducerContext<TKey, TValue>> pipe, CancellationToken cancellationToken);
+        Task<KafkaSendContext<TKey, TValue>> CreateContext(TKey key, TValue value, IPipe<KafkaSendContext<TKey, TValue>> pipe,
+            CancellationToken cancellationToken, IPipe<SendContext<TValue>> initializerPipe = null);
+
+        Task Send(ProducerContext producerContext, KafkaSendContext<TKey, TValue> sendContext);
+        Task Send(IPipe<ProducerContext> pipe, CancellationToken cancellationToken);
     }
 }

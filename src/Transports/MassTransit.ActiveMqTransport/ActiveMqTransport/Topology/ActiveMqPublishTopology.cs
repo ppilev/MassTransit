@@ -16,6 +16,7 @@ namespace MassTransit.ActiveMqTransport.Topology
             _messageTopology = messageTopology;
 
             VirtualTopicPrefix = "VirtualTopic.";
+            VirtualTopicConsumerPattern = $"Consumer[.].*[.]{VirtualTopicPrefix.Replace(".", "[.]")}";
         }
 
         IActiveMqMessagePublishTopology<T> IActiveMqPublishTopology.GetMessageTopology<T>()
@@ -24,6 +25,27 @@ namespace MassTransit.ActiveMqTransport.Topology
         }
 
         public string VirtualTopicPrefix { get; set; }
+
+        public string VirtualTopicConsumerPattern { get; set; }
+
+        IActiveMqMessagePublishTopologyConfigurator IActiveMqPublishTopologyConfigurator.GetMessageTopology(Type messageType)
+        {
+            return GetMessageTopology(messageType) as IActiveMqMessagePublishTopologyConfigurator;
+        }
+
+        public BrokerTopology GetPublishBrokerTopology()
+        {
+            var builder = new PublishEndpointBrokerTopologyBuilder();
+
+            ForEachMessageType<IActiveMqMessagePublishTopology>(x =>
+            {
+                x.Apply(builder);
+
+                builder.Topic = null;
+            });
+
+            return builder.BuildBrokerTopology();
+        }
 
         IActiveMqMessagePublishTopologyConfigurator<T> IActiveMqPublishTopologyConfigurator.GetMessageTopology<T>()
         {

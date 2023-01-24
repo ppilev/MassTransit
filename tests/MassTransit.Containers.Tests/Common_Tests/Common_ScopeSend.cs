@@ -2,17 +2,25 @@ namespace MassTransit.Containers.Tests.Common_Tests
 {
     using System;
     using System.Threading.Tasks;
+    using Mediator;
     using Microsoft.Extensions.DependencyInjection;
     using NUnit.Framework;
     using Scenarios;
     using TestFramework;
 
 
-    [TestFixture(typeof(DependencyInjectionTestFixtureContainerFactory))]
-    public class Common_ScopeSend<TContainer> :
-        InMemoryContainerTestFixture<TContainer>
-        where TContainer : ITestFixtureContainerFactory, new()
+    public class Common_ScopeSend :
+        InMemoryContainerTestFixture
     {
+        readonly TaskCompletionSource<SendContext> _taskCompletionSource;
+
+        public Common_ScopeSend()
+        {
+            _taskCompletionSource = GetTask<SendContext>();
+        }
+
+        ISendEndpointProvider SendEndpointProvider => ServiceScope.ServiceProvider.GetRequiredService<ISendEndpointProvider>();
+
         [Test]
         public async Task Should_contains_scope_on_send()
         {
@@ -26,21 +34,54 @@ namespace MassTransit.Containers.Tests.Common_Tests
             Assert.AreEqual(scope.ServiceProvider, ServiceScope.ServiceProvider);
         }
 
-        readonly TaskCompletionSource<SendContext> _taskCompletionSource;
-
-        public Common_ScopeSend()
-        {
-            _taskCompletionSource = GetTask<SendContext>();
-        }
-
-        ISendEndpointProvider SendEndpointProvider => ServiceScope.ServiceProvider.GetRequiredService<ISendEndpointProvider>();
-
         protected override void ConfigureInMemoryReceiveEndpoint(IInMemoryReceiveEndpointConfigurator configurator)
         {
             Handled<SimpleMessageClass>(configurator);
         }
 
         protected override void ConfigureInMemoryBus(IInMemoryBusFactoryConfigurator configurator)
+        {
+            configurator.ConfigureSend(cfg => cfg.UseFilter(new TestScopeFilter(_taskCompletionSource)));
+        }
+    }
+
+
+    public class Common_Mediator_ScopeSend :
+        InMemoryContainerTestFixture
+    {
+        readonly TaskCompletionSource<SendContext> _taskCompletionSource;
+
+        public Common_Mediator_ScopeSend()
+        {
+            _taskCompletionSource = GetTask<SendContext>();
+        }
+
+        IScopedMediator SendEndpoint => ServiceScope.ServiceProvider.GetRequiredService<IScopedMediator>();
+
+        [Test]
+        public async Task Should_contains_scope_on_send()
+        {
+            await SendEndpoint.Send(new SimpleMessageClass("test"));
+
+            var sent = await _taskCompletionSource.Task;
+
+            Assert.IsTrue(sent.TryGetPayload<IServiceScope>(out var scope));
+
+            Assert.AreEqual(scope.ServiceProvider, ServiceScope.ServiceProvider);
+        }
+
+        protected override IServiceCollection ConfigureServices(IServiceCollection collection)
+        {
+            return collection.AddMediator(ConfigureRegistration);
+        }
+
+        void ConfigureRegistration(IMediatorRegistrationConfigurator configurator)
+        {
+            configurator.AddConsumer<SimplerConsumer>();
+            configurator.ConfigureMediator(ConfigureMediator);
+        }
+
+        void ConfigureMediator(IMediatorRegistrationContext context, IMediatorConfigurator configurator)
         {
             configurator.ConfigureSend(cfg => cfg.UseFilter(new TestScopeFilter(_taskCompletionSource)));
         }
@@ -69,20 +110,9 @@ namespace MassTransit.Containers.Tests.Common_Tests
     }
 
 
-    public class Common_Send_Filter<TContainer> :
-        CommonContainerTestFixture<TContainer>
-        where TContainer : ITestFixtureContainerFactory, new()
+    public class Common_Send_Filter :
+        InMemoryContainerTestFixture
     {
-        [Test]
-        public async Task Should_use_scope()
-        {
-            var endpoint = await SendEndpointProvider.GetSendEndpoint(InputQueueAddress);
-            await endpoint.Send<SimpleMessageInterface>(new { Name = "test" });
-
-            var result = await _taskCompletionSource.Task;
-            Assert.AreEqual(MyId, result);
-        }
-
         readonly TaskCompletionSource<MyId> _taskCompletionSource;
 
         public Common_Send_Filter()
@@ -93,6 +123,16 @@ namespace MassTransit.Containers.Tests.Common_Tests
         MyId MyId => ServiceScope.ServiceProvider.GetRequiredService<MyId>();
 
         ISendEndpointProvider SendEndpointProvider => ServiceScope.ServiceProvider.GetRequiredService<ISendEndpointProvider>();
+
+        [Test]
+        public async Task Should_use_scope()
+        {
+            var endpoint = await SendEndpointProvider.GetSendEndpoint(InputQueueAddress);
+            await endpoint.Send<SimpleMessageInterface>(new { Name = "test" });
+
+            var result = await _taskCompletionSource.Task;
+            Assert.AreEqual(MyId, result);
+        }
 
         protected override void ConfigureMassTransit(IBusRegistrationConfigurator configurator)
         {
@@ -115,6 +155,49 @@ namespace MassTransit.Containers.Tests.Common_Tests
         protected override void ConfigureInMemoryReceiveEndpoint(IInMemoryReceiveEndpointConfigurator configurator)
         {
             configurator.ConfigureConsumer<SimplerConsumer>(BusRegistrationContext);
+        }
+    }
+
+
+    public class Common_Mediator_Send_Filter :
+        InMemoryContainerTestFixture
+    {
+        readonly TaskCompletionSource<MyId> _taskCompletionSource;
+
+        public Common_Mediator_Send_Filter()
+        {
+            _taskCompletionSource = GetTask<MyId>();
+        }
+
+        MyId MyId => ServiceScope.ServiceProvider.GetRequiredService<MyId>();
+
+        IScopedMediator SendEndpoint => ServiceScope.ServiceProvider.GetRequiredService<IScopedMediator>();
+
+        [Test]
+        public async Task Should_use_scope()
+        {
+            await SendEndpoint.Send<SimpleMessageInterface>(new { Name = "test" });
+
+            var result = await _taskCompletionSource.Task;
+            Assert.AreEqual(MyId, result);
+        }
+
+        protected override IServiceCollection ConfigureServices(IServiceCollection collection)
+        {
+            collection.AddScoped(_ => new MyId(Guid.NewGuid()));
+            collection.AddSingleton(_taskCompletionSource);
+            return collection.AddMediator(ConfigureRegistration);
+        }
+
+        void ConfigureRegistration(IMediatorRegistrationConfigurator configurator)
+        {
+            configurator.AddConsumer<SimplerConsumer>();
+            configurator.ConfigureMediator(ConfigureMediator);
+        }
+
+        static void ConfigureMediator(IMediatorRegistrationContext context, IMediatorConfigurator configurator)
+        {
+            configurator.UseSendFilter(typeof(CommonSendScopedFilter<>), context);
         }
     }
 

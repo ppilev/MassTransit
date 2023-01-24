@@ -1,21 +1,16 @@
 namespace MassTransit.AzureServiceBusTransport
 {
     using Agents;
+    using Transports;
 
 
     public class SendEndpointContextSupervisor :
-        PipeContextSupervisor<SendEndpointContext>,
+        TransportPipeContextSupervisor<SendEndpointContext>,
         ISendEndpointContextSupervisor
     {
         public SendEndpointContextSupervisor(IPipeContextFactory<SendEndpointContext> contextFactory)
             : base(contextFactory)
         {
-        }
-
-        public void Probe(ProbeContext context)
-        {
-            if (HasContext)
-                context.Add("connected", true);
         }
     }
 }

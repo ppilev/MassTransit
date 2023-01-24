@@ -17,9 +17,9 @@
         {
             var scheduleId = Guid.NewGuid().ToString();
 
-            await Scheduler.ScheduleSend(InputQueueAddress, DateTime.UtcNow + TimeSpan.FromSeconds(10), new Done {Name = "Joe"});
+            await Scheduler.ScheduleSend(InputQueueAddress, DateTime.UtcNow + TimeSpan.FromSeconds(10), new Done { Name = "Joe" });
             ScheduledRecurringMessage<Interval> scheduledRecurringMessage =
-                await QuartzEndpoint.ScheduleRecurringSend(InputQueueAddress, new MyCancelableSchedule(scheduleId), new Interval {Name = "Joe"});
+                await QuartzEndpoint.ScheduleRecurringSend(InputQueueAddress, new MyCancelableSchedule(scheduleId), new Interval { Name = "Joe" });
 
             await _done;
 
@@ -28,7 +28,7 @@
 
             await Bus.CancelScheduledRecurringSend(scheduledRecurringMessage);
 
-            await Scheduler.ScheduleSend(InputQueueAddress, DateTime.UtcNow + TimeSpan.FromSeconds(10), new DoneAgain {Name = "Joe"});
+            await Scheduler.ScheduleSend(InputQueueAddress, DateTime.UtcNow + TimeSpan.FromSeconds(10), new DoneAgain { Name = "Joe" });
 
             await _doneAgain;
 
@@ -37,38 +37,81 @@
 
         [Test]
         [Explicit]
-        public async Task Should_contain_additional_headers_that_provide_time_domain_context()
+        public async Task Should_contain_additional_headers_that_provide_schedule_key_context()
         {
             var scheduleId = Guid.NewGuid().ToString();
 
-            await Scheduler.ScheduleSend(InputQueueAddress, DateTime.UtcNow + TimeSpan.FromSeconds(10), new Done {Name = "Joe"});
+            await Scheduler.ScheduleSend(InputQueueAddress, DateTime.UtcNow + TimeSpan.FromSeconds(10), new Done { Name = "Joe" });
             ScheduledRecurringMessage<Interval> scheduledRecurringMessage =
-                await QuartzEndpoint.ScheduleRecurringSend(InputQueueAddress, new MySchedule(), new Interval {Name = "Joe"});
+                await QuartzEndpoint.ScheduleRecurringSend(InputQueueAddress, new MySchedule(), new Interval { Name = "Joe" });
 
             await _done;
 
             Assert.Greater(_count, 0, "Expected to see at least one interval");
 
 
-            Assert.IsNotNull(_lastInterval.Headers.Get<DateTimeOffset>(MessageHeaders.Quartz.Scheduled, null));
-            Assert.IsNotNull(_lastInterval.Headers.Get<DateTimeOffset>(MessageHeaders.Quartz.Sent, null));
-            Assert.IsNotNull(_lastInterval.Headers.Get<DateTimeOffset>(MessageHeaders.Quartz.NextScheduled, null));
-            Assert.IsNotNull(_lastInterval.Headers.Get<DateTimeOffset>(MessageHeaders.Quartz.PreviousSent, null));
+            Assert.IsNotNull(_lastInterval.Headers.Get<string>(MessageHeaders.Quartz.ScheduleId));
+            Assert.IsNotNull(_lastInterval.Headers.Get<string>(MessageHeaders.Quartz.ScheduleGroup));
+        }
 
-            Console.WriteLine("{0}", _lastInterval.Headers.Get<DateTimeOffset>(MessageHeaders.Quartz.NextScheduled, null));
+        [Test]
+        [Explicit]
+        public async Task Should_contain_additional_headers_that_provide_time_domain_context()
+        {
+            var scheduleId = Guid.NewGuid().ToString();
+
+            await Scheduler.ScheduleSend(InputQueueAddress, DateTime.UtcNow + TimeSpan.FromSeconds(10), new Done { Name = "Joe" });
+            ScheduledRecurringMessage<Interval> scheduledRecurringMessage =
+                await QuartzEndpoint.ScheduleRecurringSend(InputQueueAddress, new MySchedule(), new Interval { Name = "Joe" });
+
+            await _done;
+
+            Assert.Greater(_count, 0, "Expected to see at least one interval");
+
+
+            Assert.IsNotNull(_lastInterval.Headers.Get<DateTimeOffset>(MessageHeaders.Quartz.Scheduled));
+            Assert.IsNotNull(_lastInterval.Headers.Get<DateTimeOffset>(MessageHeaders.Quartz.Sent));
+            Assert.IsNotNull(_lastInterval.Headers.Get<DateTimeOffset>(MessageHeaders.Quartz.NextScheduled));
+            Assert.IsNotNull(_lastInterval.Headers.Get<DateTimeOffset>(MessageHeaders.Quartz.PreviousSent));
+
+            Console.WriteLine("{0}", _lastInterval.Headers.Get<DateTimeOffset>(MessageHeaders.Quartz.NextScheduled));
         }
 
         [Test]
         [Explicit]
         public async Task Should_handle_now_properly()
         {
-            await Scheduler.ScheduleSend(InputQueueAddress, DateTime.UtcNow + TimeSpan.FromSeconds(20), new Done {Name = "Joe"});
-            await QuartzEndpoint.ScheduleRecurringSend(InputQueueAddress, new MySchedule(), new Interval {Name = "Joe"});
+            await Scheduler.ScheduleSend(InputQueueAddress, DateTime.UtcNow + TimeSpan.FromSeconds(20), new Done { Name = "Joe" });
+            await QuartzEndpoint.ScheduleRecurringSend(InputQueueAddress, new MySchedule(), new Interval { Name = "Joe" });
 
 
             await _done;
 
             Assert.AreEqual(8, _count, "Expected to see 8 interval messages");
+        }
+
+        [Test]
+        [Explicit]
+        public async Task Should_pause_recurring_schedule()
+        {
+            var scheduleId = Guid.NewGuid().ToString();
+
+            await Scheduler.ScheduleSend(InputQueueAddress, DateTime.UtcNow + TimeSpan.FromSeconds(10), new Done { Name = "Joe" });
+            ScheduledRecurringMessage<Interval> scheduledRecurringMessage =
+                await QuartzEndpoint.ScheduleRecurringSend(InputQueueAddress, new MyCancelableSchedule(scheduleId), new Interval { Name = "Joe" });
+
+            await _done;
+
+            var countBeforeCancel = _count;
+            Assert.AreEqual(8, _count, "Expected to see 8 interval messages");
+
+            await Bus.PauseScheduledRecurringSend(scheduledRecurringMessage);
+
+            await Scheduler.ScheduleSend(InputQueueAddress, DateTime.UtcNow + TimeSpan.FromSeconds(10), new DoneAgain { Name = "Joe" });
+
+            await _doneAgain;
+
+            Assert.AreEqual(countBeforeCancel, _count, "Expected to see the count matches.");
         }
 
         Task<ConsumeContext<Done>> _done;

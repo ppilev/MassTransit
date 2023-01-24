@@ -2,12 +2,15 @@ namespace MassTransit.Configuration
 {
     using System;
     using System.Collections.Generic;
+    using System.Text.Json;
+    using Azure.Core;
     using AzureCosmos;
     using AzureCosmos.Saga;
     using Microsoft.Azure.Cosmos;
     using Microsoft.Extensions.DependencyInjection;
     using Microsoft.Extensions.DependencyInjection.Extensions;
     using Saga;
+    using Serialization;
 
 
     public class CosmosSagaRepositoryConfigurator<TSaga> :
@@ -15,23 +18,29 @@ namespace MassTransit.Configuration
         ISpecification
         where TSaga : class, ISaga
     {
+        readonly CosmosAuthSettings _settings;
         string _clientName;
         Func<IServiceProvider, ICosmosCollectionIdFormatter> _collectionIdFormatter;
         Action<ItemRequestOptions> _itemRequestOptions;
+        Action<CosmosLinqSerializerOptions> _linqSerializerOptions;
         Action<QueryRequestOptions> _queryRequestOptions;
         Action<ISagaRepositoryRegistrationConfigurator<TSaga>> _registerClientFactory;
 
-        public CosmosSagaRepositoryConfigurator()
+        public CosmosSagaRepositoryConfigurator(CosmosAuthSettings settings = null)
         {
             _collectionIdFormatter = _ => KebabCaseCollectionIdFormatter.Instance;
-
             _registerClientFactory = RegisterSystemTextJsonClientFactory;
+            _settings = settings ?? new CosmosAuthSettings();
+
+            PropertyNamingPolicy = SystemTextJsonMessageSerializer.Options.PropertyNamingPolicy;
         }
+
+        public JsonNamingPolicy PropertyNamingPolicy { private get; set; }
 
         public void ConfigureEmulator()
         {
-            EndpointUri = AzureCosmosEmulatorConstants.EndpointUri;
-            Key = AzureCosmosEmulatorConstants.Key;
+            AccountEndpoint = AzureCosmosEmulatorConstants.AccountEndpoint;
+            AuthKeyOrResourceToken = AzureCosmosEmulatorConstants.AccountKey;
         }
 
         public void SetCollectionIdFormatter(ICosmosCollectionIdFormatter collectionIdFormatter)
@@ -54,8 +63,57 @@ namespace MassTransit.Configuration
             }
         }
 
-        public string EndpointUri { get; set; }
-        public string Key { get; set; }
+        public string AccountEndpoint
+        {
+            set => _settings.AccountEndpoint = value;
+        }
+
+        public string AuthKeyOrResourceToken
+        {
+            set
+            {
+                if (_settings.AuthKeyOrResourceToken != null
+                    || _settings.ConnectionString != null)
+                    throw new ArgumentException("Another type of authentication is already being used");
+
+                _settings.AuthKeyOrResourceToken = value;
+            }
+        }
+
+        public string ConnectionString
+        {
+            set
+            {
+                if (_settings.AuthKeyOrResourceToken != null
+                    || _settings.TokenCredential != null)
+                    throw new ArgumentException("Another type of authentication is already being used");
+
+                _settings.ConnectionString = value;
+            }
+        }
+
+        [Obsolete("Use AccountEndpoint")]
+        public string EndpointUri
+        {
+            set => AccountEndpoint = value;
+        }
+
+        [Obsolete("Use AuthKeyOrResourceToken")]
+        public string Key
+        {
+            set => AuthKeyOrResourceToken = value;
+        }
+
+        public TokenCredential TokenCredential
+        {
+            set
+            {
+                if (_settings.AuthKeyOrResourceToken != null || _settings.ConnectionString != null)
+                    throw new ArgumentException("Another type of authentication is already being used");
+
+                _settings.TokenCredential = value;
+            }
+        }
 
         public void ConfigureItemRequestOptions(Action<ItemRequestOptions> cfg)
         {
@@ -85,6 +143,11 @@ namespace MassTransit.Configuration
             _collectionIdFormatter = collectionIdFormatterFactory ?? throw new ArgumentNullException(nameof(collectionIdFormatterFactory));
         }
 
+        public void ConfigureLinqSerializerOptions(Action<CosmosLinqSerializerOptions> cfg)
+        {
+            _linqSerializerOptions = cfg ?? throw new ArgumentNullException(nameof(cfg));
+        }
+
         public IEnumerable<ValidationResult> Validate()
         {
             if (string.IsNullOrWhiteSpace(DatabaseId))
@@ -106,12 +169,12 @@ namespace MassTransit.Configuration
 
         void RegisterNewtonsoftJsonClientFactory(ISagaRepositoryRegistrationConfigurator<TSaga> configurator)
         {
-            configurator.TryAddSingleton<ICosmosClientFactory>(provider => new NewtonsoftJsonCosmosClientFactory(EndpointUri, Key));
+            configurator.TryAddSingleton<ICosmosClientFactory>(provider => new NewtonsoftJsonCosmosClientFactory(_settings));
         }
 
         void RegisterSystemTextJsonClientFactory(ISagaRepositoryRegistrationConfigurator<TSaga> configurator)
         {
-            configurator.TryAddSingleton<ICosmosClientFactory>(provider => new SystemTextJsonCosmosClientFactory(EndpointUri, Key));
+            configurator.TryAddSingleton<ICosmosClientFactory>(provider => new SystemTextJsonCosmosClientFactory(_settings, PropertyNamingPolicy));
         }
 
         DatabaseContext<TSaga> DatabaseContextFactory(IServiceProvider provider)
@@ -119,10 +182,25 @@ namespace MassTransit.Configuration
             var clientFactory = provider.GetRequiredService<ICosmosClientFactory>();
             var client = clientFactory.GetCosmosClient<TSaga>(_clientName);
 
+            Action<CosmosLinqSerializerOptions> serializationOptions = null;
+            if (client.ClientOptions.Serializer is SystemTextJsonCosmosSerializer serializer)
+            {
+                if (serializer.Options.PropertyNamingPolicy == JsonNamingPolicy.CamelCase ||
+                    (serializer.Options.PropertyNamingPolicy is SagaRenamePropertyNamingPolicy policy && policy.Policy == JsonNamingPolicy.CamelCase))
+                {
+                    serializationOptions = options =>
+                    {
+                        options.PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase;
+
+                        _linqSerializerOptions?.Invoke(options);
+                    };
+                }
+            }
+
             var collectionIdFormatter = _collectionIdFormatter(provider);
             var container = client.GetContainer(DatabaseId, collectionIdFormatter.Saga<TSaga>());
 
-            return new CosmosDatabaseContext<TSaga>(container, _itemRequestOptions, _queryRequestOptions);
+            return new CosmosDatabaseContext<TSaga>(container, _queryRequestOptions, _itemRequestOptions, serializationOptions);
         }
     }
 }

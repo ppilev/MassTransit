@@ -39,6 +39,7 @@ namespace MassTransit.Configuration
 
         static void AddMassTransitComponents(IServiceCollection collection)
         {
+            collection.AddScoped<IScopedMediator, ScopedMediator>();
             collection.TryAddScoped<ScopedConsumeContextProvider>();
             collection.TryAddScoped(provider => provider.GetRequiredService<ScopedConsumeContextProvider>().GetContext());
             collection.TryAddSingleton<IConsumeScopeProvider>(provider => new ConsumeScopeProvider(provider));
@@ -53,6 +54,7 @@ namespace MassTransit.Configuration
             return Bus.Factory.CreateMediator(cfg =>
             {
                 _configure?.Invoke(context, cfg);
+
                 cfg.ConfigureConsumers(context);
                 cfg.ConfigureSagas(context);
             });

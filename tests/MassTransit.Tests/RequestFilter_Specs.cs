@@ -4,8 +4,8 @@ namespace MassTransit.Tests
     using System.Threading.Tasks;
     using MassTransit.Testing;
     using Microsoft.Extensions.DependencyInjection;
-    using Middleware;
     using NUnit.Framework;
+    using TestFramework;
     using TestFramework.Messages;
 
 
@@ -30,8 +30,6 @@ namespace MassTransit.Tests
                 .BuildServiceProvider(true);
 
             var harness = provider.GetTestHarness();
-
-            harness.TestInactivityTimeout = TimeSpan.FromSeconds(1);
 
             await harness.Start();
 

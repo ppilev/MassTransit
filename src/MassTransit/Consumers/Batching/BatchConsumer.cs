@@ -2,10 +2,12 @@
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics;
     using System.Linq;
     using System.Threading;
     using System.Threading.Tasks;
     using Context;
+    using Logging;
     using Util;
 
 
@@ -18,23 +20,24 @@
         readonly ChannelExecutor _dispatcher;
         readonly ChannelExecutor _executor;
         readonly DateTime _firstMessage;
-        readonly int _messageLimit;
         readonly SortedDictionary<Guid, ConsumeContext<TMessage>> _messages;
+        readonly BatchOptions _options;
         readonly Timer _timer;
+        Activity _currentActivity;
         DateTime _lastMessage;
+        ILogContext _logContext;
 
-        public BatchConsumer(int messageLimit, TimeSpan timeLimit, ChannelExecutor executor, ChannelExecutor dispatcher,
-            IPipe<ConsumeContext<Batch<TMessage>>> consumerPipe)
+        public BatchConsumer(BatchOptions options, ChannelExecutor executor, ChannelExecutor dispatcher, IPipe<ConsumeContext<Batch<TMessage>>> consumerPipe)
         {
-            _messageLimit = messageLimit;
             _executor = executor;
             _consumerPipe = consumerPipe;
             _dispatcher = dispatcher;
             _messages = new SortedDictionary<Guid, ConsumeContext<TMessage>>();
             _completed = TaskUtil.GetTask<DateTime>();
             _firstMessage = DateTime.UtcNow;
+            _options = options;
 
-            _timer = new Timer(TimeLimitExpired, null, timeLimit, TimeSpan.FromMilliseconds(-1));
+            _timer = new Timer(TimeLimitExpired, null, _options.TimeLimit, TimeSpan.FromMilliseconds(-1));
         }
 
         public bool IsCompleted { get; private set; }
@@ -49,10 +52,6 @@
             {
                 // if this message was marked as successfully delivered, do not fault it
                 if (context.ReceiveContext.IsDelivered)
-                    return;
-
-                // again, if it's already faulted, we don't want to fault it again
-                if (context.ReceiveContext.IsFaulted)
                     return;
 
                 throw;
@@ -73,14 +72,21 @@
 
                 List<ConsumeContext<TMessage>> messages = GetMessageBatchInOrder();
 
-                return _dispatcher.Push(() => Deliver(messages[0], messages, BatchCompletionMode.Time));
+                return _dispatcher.Push(() => Deliver(messages[messages.Count - 1], messages, BatchCompletionMode.Time));
             }));
         }
 
-        public Task Add(ConsumeContext<TMessage> context)
+        public Task Add(ConsumeContext<TMessage> context, Activity currentActivity)
         {
+            _logContext ??= LogContext.Current;
+            if (currentActivity != null)
+                _currentActivity = currentActivity;
+
             var messageId = context.MessageId ?? NewId.NextGuid();
             _messages.Add(messageId, context);
+
+            if (_options.TimeLimitStart == BatchTimeLimitStart.FromLast)
+                _timer.Change(_options.TimeLimit, TimeSpan.FromMilliseconds(-1));
 
             _lastMessage = DateTime.UtcNow;
 
@@ -101,7 +107,7 @@
             if (context.GetRetryAttempt() > 0)
                 return true;
 
-            return _messages.Count == _messageLimit;
+            return _messages.Count == _options.MessageLimit;
         }
 
         public Task ForceComplete()
@@ -111,12 +117,16 @@
             List<ConsumeContext<TMessage>> consumeContexts = GetMessageBatchInOrder();
             return consumeContexts.Count == 0
                 ? Task.CompletedTask
-                : _dispatcher.Push(() => Deliver(consumeContexts.Last(), consumeContexts, BatchCompletionMode.Forced));
+                : _dispatcher.Push(() => Deliver(consumeContexts[consumeContexts.Count - 1], consumeContexts, BatchCompletionMode.Forced));
         }
 
         async Task Deliver(ConsumeContext context, IReadOnlyList<ConsumeContext<TMessage>> messages, BatchCompletionMode batchCompletionMode)
         {
             _timer.Dispose();
+
+            LogContext.SetCurrentIfNull(_logContext);
+
+            Activity.Current = _currentActivity;
 
             Batch<TMessage> batch = new MessageBatch<TMessage>(_firstMessage, _lastMessage, batchCompletionMode, messages);
 

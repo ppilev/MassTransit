@@ -1,29 +1,32 @@
 namespace MassTransit.EventHubIntegration
 {
     using System;
+    using System.Threading;
     using System.Threading.Tasks;
     using Azure.Messaging.EventHubs.Processor;
     using Checkpoints;
-    using MassTransit.Configuration;
     using Util;
 
 
     public class ProcessorLockContext :
-        IProcessorLockContext
+        IProcessorLockContext,
+        ProcessorClientBuilderContext
     {
         readonly SingleThreadedDictionary<string, PartitionCheckpointData> _data = new SingleThreadedDictionary<string, PartitionCheckpointData>();
-        readonly IHostConfiguration _hostConfiguration;
+        readonly ProcessorContext _context;
         readonly ReceiveSettings _receiveSettings;
+        readonly CancellationToken _cancellationToken;
 
-        public ProcessorLockContext(IHostConfiguration hostConfiguration, ReceiveSettings receiveSettings)
+        public ProcessorLockContext(ProcessorContext context, ReceiveSettings receiveSettings, CancellationToken cancellationToken)
         {
-            _hostConfiguration = hostConfiguration;
+            _context = context;
             _receiveSettings = receiveSettings;
+            _cancellationToken = cancellationToken;
         }
 
         public async Task Pending(ProcessEventArgs eventArgs)
         {
-            LogContext.SetCurrentIfNull(_hostConfiguration.ReceiveLogContext);
+            LogContext.SetCurrentIfNull(_context.LogContext);
 
             if (_data.TryGetValue(eventArgs.Partition.PartitionId, out var data))
                 await data.Pending(eventArgs).ConfigureAwait(false);
@@ -31,7 +34,7 @@ namespace MassTransit.EventHubIntegration
 
         public Task Faulted(ProcessEventArgs eventArgs, Exception exception)
         {
-            LogContext.SetCurrentIfNull(_hostConfiguration.ReceiveLogContext);
+            LogContext.SetCurrentIfNull(_context.LogContext);
 
             if (_data.TryGetValue(eventArgs.Partition.PartitionId, out var data))
                 data.Faulted(eventArgs, exception);
@@ -41,7 +44,7 @@ namespace MassTransit.EventHubIntegration
 
         public Task Complete(ProcessEventArgs eventArgs)
         {
-            LogContext.SetCurrentIfNull(_hostConfiguration.ReceiveLogContext);
+            LogContext.SetCurrentIfNull(_context.LogContext);
 
             if (_data.TryGetValue(eventArgs.Partition.PartitionId, out var data))
                 data.Complete(eventArgs);
@@ -51,38 +54,50 @@ namespace MassTransit.EventHubIntegration
 
         public async Task OnPartitionInitializing(PartitionInitializingEventArgs eventArgs)
         {
-            LogContext.SetCurrentIfNull(_hostConfiguration.ReceiveLogContext);
+            LogContext.SetCurrentIfNull(_context.LogContext);
 
-            _data.TryAdd(eventArgs.PartitionId, _ => new PartitionCheckpointData(_receiveSettings));
+            if (!_data.TryAdd(eventArgs.PartitionId, _ => new PartitionCheckpointData(_receiveSettings, _cancellationToken)))
+                return;
+
             LogContext.Info?.Log("Partition: {PartitionId} was initialized", eventArgs.PartitionId);
         }
 
         public async Task OnPartitionClosing(PartitionClosingEventArgs eventArgs)
         {
-            LogContext.SetCurrentIfNull(_hostConfiguration.ReceiveLogContext);
+            LogContext.SetCurrentIfNull(_context.LogContext);
 
-            if (_data.TryRemove(eventArgs.PartitionId, out var data))
-                await data.Close(eventArgs).ConfigureAwait(false);
+            if (!_data.TryGetValue(eventArgs.PartitionId, out var data))
+                return;
+
+            await data.Close(eventArgs).ConfigureAwait(false);
+            _data.TryRemove(eventArgs.PartitionId, out _);
         }
 
 
         sealed class PartitionCheckpointData
         {
+            readonly CancellationToken _cancellationToken;
             readonly ChannelExecutor _executor;
             readonly PendingConfirmationCollection _pending;
-            readonly ICheckpointer _receiver;
+            readonly ICheckpointer _checkpointer;
+            readonly CancellationTokenSource _cancellationTokenSource;
 
-            public PartitionCheckpointData(ReceiveSettings settings)
+            public PartitionCheckpointData(ReceiveSettings settings, CancellationToken cancellationToken)
             {
-                _executor = new ChannelExecutor(1);
-                _receiver = new BatchCheckpointer(_executor, settings);
-                _pending = new PendingConfirmationCollection(settings.EventHubName);
+                _cancellationToken = cancellationToken;
+                _cancellationTokenSource = new CancellationTokenSource();
+                _executor = new ChannelExecutor(settings.PrefetchCount, settings.ConcurrentMessageLimit);
+                _checkpointer = new BatchCheckpointer(settings, _cancellationTokenSource.Token);
+                _pending = new PendingConfirmationCollection(settings.EventHubName, cancellationToken);
             }
 
             public Task Pending(ProcessEventArgs eventArgs)
             {
+                if (_cancellationToken.IsCancellationRequested)
+                    return Task.CompletedTask;
+
                 var pendingConfirmation = _pending.Add(eventArgs);
-                return _receiver.Pending(pendingConfirmation);
+                return _checkpointer.Pending(pendingConfirmation);
             }
 
             public void Complete(ProcessEventArgs eventArgs)
@@ -97,11 +112,43 @@ namespace MassTransit.EventHubIntegration
 
             public async Task Close(PartitionClosingEventArgs args)
             {
-                await _receiver.Close(args.Reason).ConfigureAwait(false);
+                if (args.Reason != ProcessingStoppedReason.Shutdown)
+                    _cancellationTokenSource.Cancel();
+
                 await _executor.DisposeAsync().ConfigureAwait(false);
+                await _checkpointer.DisposeAsync().ConfigureAwait(false);
 
                 LogContext.Info?.Log("Partition: {PartitionId} was closed, reason: {Reason}", args.PartitionId, args.Reason);
+
+                _pending.Dispose();
+                _cancellationTokenSource.Cancel();
+                _cancellationTokenSource.Dispose();
             }
+
+            public Task Push(Func<Task> method)
+            {
+                return _executor.Push(method, _cancellationTokenSource.Token);
+            }
+
+            public Task Run(Func<Task> method)
+            {
+                return _executor.Run(method, _cancellationTokenSource.Token);
+            }
+        }
+
+
+        public async ValueTask DisposeAsync()
+        {
+        }
+
+        public Task Push(ProcessEventArgs partition, Func<Task> method, CancellationToken cancellationToken = default)
+        {
+            return _data[partition.Partition.PartitionId].Push(method);
+        }
+
+        public Task Run(ProcessEventArgs partition, Func<Task> method, CancellationToken cancellationToken = default)
+        {
+            return _data[partition.Partition.PartitionId].Run(method);
         }
     }
 }

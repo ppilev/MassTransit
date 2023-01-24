@@ -13,6 +13,7 @@ namespace MassTransitBenchmark
         {
             Latency = 1,
             Rpc = 2,
+            BusOutbox = 4,
         }
 
 
@@ -24,7 +25,8 @@ namespace MassTransitBenchmark
             InMemory,
             AmazonSqs,
             ActiveMq,
-            Grpc
+            Grpc,
+            Kafka
         }
 
 
@@ -36,6 +38,7 @@ namespace MassTransitBenchmark
             Add<TransportOptions>("t|transport:", "Transport (RabbitMQ, AzureServiceBus, Mediator, AmazonSqs, InMemory, Grpc)",
                 value => Transport = value);
             Add("rabbitmq", "Use RabbitMQ", x => Transport = TransportOptions.RabbitMq);
+            Add("kafka", "Use Kafka", x => Transport = TransportOptions.Kafka);
             Add("mediator", "Use Mediator", x => Transport = TransportOptions.Mediator);
             Add("inmemory", "Use InMemory", x => Transport = TransportOptions.InMemory);
             Add("sqs", "Use Amazon SQS", x => Transport = TransportOptions.AmazonSqs);
@@ -46,6 +49,7 @@ namespace MassTransitBenchmark
             Add<BenchmarkOptions>("run:", "Run benchmark (All, Latency, RPC)", value => Benchmark = value);
             Add("rpc", "Run the RPC benchmark", x => Benchmark = BenchmarkOptions.Rpc);
             Add("latency", "Run the Latency benchmark", x => Benchmark = BenchmarkOptions.Latency);
+            Add("busoutbox", "Run the Bus Outbox benchmark", x => Benchmark = BenchmarkOptions.BusOutbox);
 
             Benchmark = BenchmarkOptions.Latency | BenchmarkOptions.Rpc;
         }

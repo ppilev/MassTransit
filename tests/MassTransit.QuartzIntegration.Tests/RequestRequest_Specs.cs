@@ -6,7 +6,6 @@ namespace MassTransit.QuartzIntegration.Tests
     using Contracts;
     using LongRunningRequestTest;
     using NUnit.Framework;
-    using Saga;
 
 
     [TestFixture]
@@ -19,7 +18,7 @@ namespace MassTransit.QuartzIntegration.Tests
             IRequestClient<CreateShortLink> client = Bus.CreateRequestClient<CreateShortLink>(RequestTimeout.After(s: 30));
 
             Assert.That(async () =>
-                await client.GetResponse<ShortLinkCreated>(new {Link = new Uri("http://www.google.com")}), Throws.TypeOf<RequestFaultException>());
+                await client.GetResponse<ShortLinkCreated>(new { Link = new Uri("http://www.google.com") }), Throws.TypeOf<RequestFaultException>());
         }
 
         [Test]
@@ -27,7 +26,7 @@ namespace MassTransit.QuartzIntegration.Tests
         {
             IRequestClient<CreateShortLink> client = Bus.CreateRequestClient<CreateShortLink>(RequestTimeout.After(s: 30));
 
-            Response<ShortLinkCreated> response = await client.GetResponse<ShortLinkCreated>(new {Link = new Uri("http://www.microsoft.com")});
+            Response<ShortLinkCreated> response = await client.GetResponse<ShortLinkCreated>(new { Link = new Uri("http://www.microsoft.com") });
 
             Console.WriteLine("Link: {0}, Short Link: {1}", response.Message.Link, response.Message.ShortLink);
         }
@@ -125,15 +124,18 @@ namespace MassTransit.QuartzIntegration.Tests
                 During(Initial,
                     When(CreateRequested)
                         .Then(context => context.Instance.Link = context.Data.Link)
-                        .Request(LinkRequest, x => x.Init<RequestShortLink>(new {x.Data.Link}))
+                        .Request(LinkRequest, x => x.Init<RequestShortLink>(new { x.Data.Link }))
                         .RequestStarted()
                         .TransitionTo(LinkRequest.Pending));
 
                 During(LinkRequest.Pending,
                     When(LinkRequest.Completed)
                         .Then(context => context.Instance.ShortLink = context.Data.Link)
-                        .RequestCompleted()
-                        .TransitionTo(Valid),
+                        .RequestCompleted(x => Task.FromResult<ShortLinkCreated>(new ShortLinkCreatedCls
+                        {
+                            Link = x.Instance.Link,
+                            ShortLink = new Uri("http://mt.com")
+                        })).TransitionTo(Valid),
                     When(LinkRequest.Faulted)
                         .RequestFaulted(CreateRequested)
                         .TransitionTo(Invalid));
@@ -153,6 +155,13 @@ namespace MassTransit.QuartzIntegration.Tests
             public Event<CreateShortLink> CreateRequested { get; private set; }
 
             public Request<CreateLinkState, RequestShortLink, ShortLinkCreated> LinkRequest { get; private set; }
+        }
+
+
+        public class ShortLinkCreatedCls : ShortLinkCreated
+        {
+            public Uri Link { get; set; }
+            public Uri ShortLink { get; set; }
         }
 
 

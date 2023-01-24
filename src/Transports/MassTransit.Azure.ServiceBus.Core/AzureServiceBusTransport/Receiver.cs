@@ -51,7 +51,10 @@
                 MessageTimeToLiveExpiredException _ => false,
                 MessageLockExpiredException _ => false,
                 ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost } => false,
+                ServiceBusException { Reason: ServiceBusFailureReason.SessionLockLost } => false,
                 ServiceBusException { Reason: ServiceBusFailureReason.ServiceCommunicationProblem } => true,
+                ServiceBusException { Reason: ServiceBusFailureReason.MessagingEntityNotFound } => true,
+                ServiceBusException { Reason: ServiceBusFailureReason.MessagingEntityDisabled } => true,
                 ServiceBusException { IsTransient: true } => false,
                 _ => true
             };
@@ -73,6 +76,10 @@
                 // don't log this one
             }
             else if (args.Exception is ServiceBusException { Reason: ServiceBusFailureReason.MessageLockLost })
+            {
+                // don't log this one
+            }
+            else if (args.Exception is ServiceBusException { Reason: ServiceBusFailureReason.SessionLockLost })
             {
                 // don't log this one
             }
@@ -107,11 +114,10 @@
         {
             await _context.ShutdownAsync().ConfigureAwait(false);
 
-            SetCompleted(ActiveAndActualAgentsCompleted(context));
+            SetCompleted(ActiveAndActualAgentsCompleted(context)
+                .ContinueWith(_ => Close()));
 
             await Completed.ConfigureAwait(false);
-
-            await _context.CloseAsync().ConfigureAwait(false);
 
             LogContext.Debug?.Log("Receiver stopped: {InputAddress}", _context.InputAddress);
         }
@@ -128,6 +134,18 @@
                 {
                     LogContext.Warning?.Log("Stop canceled waiting for message consumers to complete: {InputAddress}", _context.InputAddress);
                 }
+            }
+        }
+
+        async Task Close()
+        {
+            try
+            {
+                await _context.CloseAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                LogContext.Warning?.Log(exception, "Failed to close the message receiver context: {InputAddress}", _context.InputAddress);
             }
         }
 

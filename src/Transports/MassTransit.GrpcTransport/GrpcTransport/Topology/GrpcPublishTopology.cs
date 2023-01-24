@@ -26,9 +26,14 @@ namespace MassTransit.GrpcTransport.Topology
             return GetMessageTopology<T>() as IGrpcMessagePublishTopologyConfigurator<T>;
         }
 
+        IGrpcMessagePublishTopologyConfigurator IGrpcPublishTopologyConfigurator.GetMessageTopology(Type messageType)
+        {
+            return GetMessageTopology(messageType) as IGrpcMessagePublishTopologyConfigurator;
+        }
+
         protected override IMessagePublishTopologyConfigurator CreateMessageTopology<T>(Type type)
         {
-            var topology = new GrpcMessagePublishTopology<T>(_messageTopology.GetMessageTopology<T>());
+            var topology = new GrpcMessagePublishTopology<T>(this, _messageTopology.GetMessageTopology<T>());
 
             var connector = new ImplementedMessageTypeConnector<T>(this, topology);
 

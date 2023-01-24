@@ -33,6 +33,8 @@ namespace MassTransit.Internals.Caching
 
         public double HitRatio => _metrics.HitRatio;
 
+        public Task<IEnumerable<TValue>> Values => GetValues();
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Task<TValue> Get(TKey key)
         {
@@ -61,7 +63,7 @@ namespace MassTransit.Internals.Caching
             cacheValue = _policy.CreateValue(RemoveValue);
 
             if (!_values.TryAdd(key, cacheValue))
-                return GetOrAdd(key, missingValueFactory);
+                return Get(key);
 
             _metrics.Miss();
 
@@ -75,12 +77,38 @@ namespace MassTransit.Internals.Caching
             return Added();
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public async Task<bool> Remove(TKey key)
+        {
+            if (!TryGetValue(key, out var cacheValue))
+                return false;
+
+            await cacheValue.Evict().ConfigureAwait(false);
+            return true;
+        }
+
+        public Task Clear()
+        {
+            return _tracker.Clear();
+        }
+
+        async Task<IEnumerable<TValue>> GetValues()
+        {
+            return await Task.WhenAll(_values.Values.Select(x => x.Value));
+        }
+
         bool TryGetValue(TKey key, out TCacheValue value)
         {
-            if (_values.TryGetValue(key, out value) && !value.IsFaultedOrCanceled)
+            if (_values.TryGetValue(key, out value))
             {
-                _metrics.Hit();
-                return true;
+                if (!value.IsFaultedOrCanceled)
+                {
+                    _metrics.Hit();
+                    return true;
+                }
+
+                value.Evict();
+                value = default;
             }
 
             return false;

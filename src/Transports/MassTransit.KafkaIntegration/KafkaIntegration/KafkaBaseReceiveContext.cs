@@ -4,7 +4,6 @@
     using System.Threading.Tasks;
     using Confluent.Kafka;
     using Serialization;
-    using Serializers;
     using Transports;
 
 
@@ -14,31 +13,40 @@
         ReceiveLockContext
         where TValue : class
     {
-        readonly IHeadersDeserializer _headersDeserializer;
-        readonly IConsumerLockContext<TKey, TValue> _lockContext;
-        readonly ConsumeResult<TKey, TValue> _result;
-        IHeaderProvider _headerProvider;
+        readonly KafkaReceiveEndpointContext<TKey, TValue> _context;
+        readonly Lazy<TKey> _key;
+        readonly IConsumerLockContext _lockContext;
+        readonly ConsumeResult<byte[], byte[]> _result;
+        readonly Lazy<IHeaderProvider> _headerProvider;
 
-        public KafkaReceiveContext(ConsumeResult<TKey, TValue> result, ReceiveEndpointContext receiveEndpointContext,
-            IConsumerLockContext<TKey, TValue> lockContext, IHeadersDeserializer headersDeserializer)
-            : base(false, receiveEndpointContext)
+        public KafkaReceiveContext(ConsumeResult<byte[], byte[]> result, KafkaReceiveEndpointContext<TKey, TValue> context, IConsumerLockContext lockContext)
+            : base(false, context)
         {
             _result = result;
+            _context = context;
             _lockContext = lockContext;
-            _headersDeserializer = headersDeserializer;
 
-            Body = new NotSupportedMessageBody();
+            InputAddress = context.GetInputAddress(_result.Topic);
 
-            var consumeContext = new KafkaConsumeContext<TKey, TValue>(this, _result);
+            _key = new Lazy<TKey>(() => _context.KeyDeserializer.DeserializeKey(result));
+            _headerProvider = new Lazy<IHeaderProvider>(() => _context.HeadersDeserializer.Deserialize(_result.Message.Headers));
+
+            var messageContext = new KafkaMessageContext(_result, this);
+
+            var serializerContext = new KafkaSerializationContext<TValue>(_result, context.ValueDeserializer, messageContext);
+
+            var consumeContext = new KafkaConsumeContext<TKey, TValue>(this, serializerContext);
 
             AddOrUpdatePayload<ConsumeContext>(() => consumeContext, existing => consumeContext);
         }
 
-        protected override IHeaderProvider HeaderProvider => _headerProvider ??= _headersDeserializer.Deserialize(_result.Message.Headers);
+        protected override IHeaderProvider HeaderProvider => _headerProvider.Value;
 
-        public override MessageBody Body { get; }
+        public override MessageBody Body => new NotSupportedMessageBody();
 
-        public TKey Key => _result.Message.Key;
+        public string GroupId => _context.GroupId;
+
+        public TKey Key => _key.Value;
 
         public string Topic => _result.Topic;
 

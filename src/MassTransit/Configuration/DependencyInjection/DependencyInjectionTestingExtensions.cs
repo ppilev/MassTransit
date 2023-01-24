@@ -1,7 +1,9 @@
+#nullable enable
 namespace MassTransit
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics;
     using System.IO;
     using System.Linq;
     using Configuration;
@@ -12,6 +14,7 @@ namespace MassTransit
     using Microsoft.Extensions.DependencyInjection;
     using Microsoft.Extensions.DependencyInjection.Extensions;
     using Microsoft.Extensions.Logging;
+    using Microsoft.Extensions.Options;
     using Testing;
     using Testing.Implementations;
     using Transports;
@@ -27,7 +30,7 @@ namespace MassTransit
         /// configuration (by default, unless another UsingXxx transport method is specified), and saga repositories are
         /// replaced with in-memory as well.
         /// </summary>
-        public static IServiceCollection AddMassTransitTestHarness(this IServiceCollection services, Action<IBusRegistrationConfigurator> configure = null)
+        public static IServiceCollection AddMassTransitTestHarness(this IServiceCollection services, Action<IBusRegistrationConfigurator>? configure = null)
         {
             return AddMassTransitTestHarness(services, Console.Out, configure);
         }
@@ -41,11 +44,14 @@ namespace MassTransit
         /// replaced with in-memory as well.
         /// </summary>
         public static IServiceCollection AddMassTransitTestHarness(this IServiceCollection services, TextWriter textWriter,
-            Action<IBusRegistrationConfigurator> configure = null)
+            Action<IBusRegistrationConfigurator>? configure = null)
         {
-            services.TryAddSingleton<ILoggerFactory>(provider => new TextWriterLoggerFactory(textWriter, true));
+            services.AddOptions<TextWriterLoggerOptions>();
+            services.TryAddSingleton<ILoggerFactory>(provider =>
+                new TextWriterLoggerFactory(textWriter, provider.GetRequiredService<IOptions<TextWriterLoggerOptions>>()));
             services.TryAddSingleton(typeof(ILogger<>), typeof(Logger<>));
 
+            services.AddOptions<TestHarnessOptions>();
             services.AddBusObserver<ContainerTestHarnessBusObserver>();
             services.TryAddSingleton<ITestHarness>(provider => provider.GetService<ContainerTestHarness>());
             services.TryAddSingleton<ContainerTestHarness>();
@@ -64,7 +70,6 @@ namespace MassTransit
                 services.RemoveMassTransit();
                 services.RemoveSagaRepositories();
             }
-
 
             return services.AddMassTransit(x =>
             {
@@ -94,6 +99,53 @@ namespace MassTransit
             });
         }
 
+        /// <summary>
+        /// Adds a telemetry listener to the test harness, which outputs a timeline view of the unit test
+        /// </summary>
+        /// <param name="services"></param>
+        /// <param name="includeDetails">If true, additional details from each span are shown</param>
+        public static IServiceCollection AddTelemetryListener(this IServiceCollection services, bool includeDetails = false)
+        {
+            return services.AddTelemetryListener(Console.Out);
+        }
+
+        /// <summary>
+        /// Adds a telemetry listener to the test harness, which outputs a timeline view of the unit test
+        /// </summary>
+        /// <param name="services"></param>
+        /// <param name="textWriter">Override the default Console.Out TextWriter</param>
+        /// <param name="includeDetails">If true, additional details from each span are shown</param>
+        public static IServiceCollection AddTelemetryListener(this IServiceCollection services, TextWriter textWriter, bool includeDetails = false)
+        {
+            var (methodName, className) = GetTestMethodInfo();
+
+            services.TryAddSingleton(provider => new TestActivityListener(textWriter, methodName, className, includeDetails));
+
+            return services;
+        }
+
+        /// <summary>
+        /// Specify the test and/or the test inactivity timeouts that should be used by the test harness.
+        /// </summary>
+        /// <param name="configurator"></param>
+        /// <param name="testTimeout">If specified, changes the test timeout</param>
+        /// <param name="testInactivityTimeout">If specified, changes the test inactivity timeout</param>
+        /// <returns></returns>
+        public static IBusRegistrationConfigurator SetTestTimeouts(this IBusRegistrationConfigurator configurator, TimeSpan? testTimeout = default,
+            TimeSpan? testInactivityTimeout = default)
+        {
+            configurator.AddOptions<TestHarnessOptions>()
+                .Configure(options =>
+                {
+                    if (testTimeout.HasValue)
+                        options.TestTimeout = testTimeout.Value;
+                    if (testInactivityTimeout.HasValue)
+                        options.TestInactivityTimeout = testInactivityTimeout.Value;
+                });
+
+            return configurator;
+        }
+
         static void RegisterConsumerTestHarnesses(IServiceCollection services)
         {
             List<ServiceDescriptor> consumerRegistrations = services
@@ -106,7 +158,8 @@ namespace MassTransit
                     continue;
 
                 var type = typeof(RegistrationForConsumer<>).MakeGenericType(types[0]);
-                var register = (IRegisterTestHarness)Activator.CreateInstance(type);
+                var register = Activator.CreateInstance(type) as IRegisterTestHarness
+                    ?? throw new InvalidOperationException("Could not create consumer registration");
                 register.RegisterTestHarness(services);
             }
         }
@@ -122,13 +175,15 @@ namespace MassTransit
                 if (registration.ImplementationInstance.GetType().ClosesType(typeof(SagaStateMachineRegistration<,>), out Type[] types))
                 {
                     var type = typeof(RegistrationForSagaStateMachine<,>).MakeGenericType(types);
-                    var register = (IRegisterTestHarness)Activator.CreateInstance(type);
+                    var register = Activator.CreateInstance(type) as IRegisterTestHarness
+                        ?? throw new InvalidOperationException("Could not create consumer registration");
                     register.RegisterTestHarness(services);
                 }
                 else if (registration.ImplementationInstance.GetType().ClosesType(typeof(SagaRegistration<>), out types))
                 {
                     var type = typeof(RegistrationForSaga<>).MakeGenericType(types);
-                    var register = (IRegisterTestHarness)Activator.CreateInstance(type);
+                    var register = Activator.CreateInstance(type) as IRegisterTestHarness
+                        ?? throw new InvalidOperationException("Could not create consumer registration");
                     register.RegisterTestHarness(services);
                 }
             }
@@ -138,7 +193,7 @@ namespace MassTransit
         /// Add the In-Memory test harness to the container, and configure it using the callback specified.
         /// </summary>
         public static IServiceCollection AddMassTransitInMemoryTestHarness(this IServiceCollection services,
-            Action<IBusRegistrationConfigurator> configure = null)
+            Action<IBusRegistrationConfigurator>? configure = null)
         {
             services.AddMassTransit(cfg =>
             {
@@ -152,11 +207,11 @@ namespace MassTransit
                 if (busInstances == null)
                 {
                     var busInstance = provider.GetService<IBusInstance>();
+                    if (busInstance == null)
+                        throw new ConfigurationException("No bus instances found");
+
                     busInstances = new[] { busInstance };
                 }
-
-                if (busInstances == null)
-                    throw new ConfigurationException("No bus instances found");
 
                 var testHarnessBusInstance = busInstances.FirstOrDefault(x => x is InMemoryTestHarnessBusInstance);
                 if (testHarnessBusInstance is InMemoryTestHarnessBusInstance testInstance)
@@ -167,6 +222,32 @@ namespace MassTransit
             services.AddSingleton<BusTestHarness>(provider => provider.GetRequiredService<InMemoryTestHarness>());
 
             return services;
+        }
+
+        static (string? methodName, string? className) GetTestMethodInfo()
+        {
+            var stackTrace = new StackTrace(2);
+            var frameCount = stackTrace.FrameCount;
+            for (var i = 0; i < frameCount; i++)
+            {
+                var frame = stackTrace.GetFrame(i);
+
+                if (frame == null || !frame.HasMethod())
+                    continue;
+
+                var method = frame.GetMethod();
+                if (method == null)
+                    continue;
+
+                if (method.GetCustomAttributes(false).Any(x =>
+                    {
+                        var name = x.GetType().Name;
+                        return name.ToLower().Contains("test") || name.ToLower().Contains("fact");
+                    }))
+                    return (method.Name, method.DeclaringType?.Name);
+            }
+
+            return (null, null);
         }
 
         /// <summary>

@@ -3,21 +3,34 @@ namespace MassTransit.KafkaIntegration
     using System;
     using System.Threading;
     using System.Threading.Tasks;
-    using Confluent.Kafka;
     using Initializers;
     using Logging;
+    using MassTransit.Middleware;
     using Transports;
 
 
     public class TopicProducer<TKey, TValue> :
+        Supervisor,
+        IAsyncDisposable,
         ITopicProducer<TKey, TValue>
         where TValue : class
     {
+        readonly ConnectHandle _connectHandle;
         readonly KafkaSendTransportContext<TKey, TValue> _context;
 
-        public TopicProducer(KafkaSendTransportContext<TKey, TValue> context)
+        public TopicProducer(KafkaSendTransportContext<TKey, TValue> context, ConnectHandle connectHandle = null)
         {
             _context = context;
+            _connectHandle = connectHandle;
+
+            foreach (var handle in _context.GetAgentHandles())
+                Add(handle);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            _connectHandle?.Disconnect();
+            await this.Stop("Disposing Producer").ConfigureAwait(false);
         }
 
         public Task Produce(TKey key, TValue value, CancellationToken cancellationToken = default)
@@ -39,7 +52,8 @@ namespace MassTransit.KafkaIntegration
         {
             (var message, IPipe<SendContext<TValue>> sendPipe) = await MessageInitializerCache<TValue>.InitializeMessage(values, cancellationToken);
 
-            await _context.Send(new SendPipe(_context, key, message, pipe, cancellationToken, sendPipe), cancellationToken).ConfigureAwait(false);
+            await _context.Send(new SendPipe(_context, key, message, pipe, cancellationToken, sendPipe), cancellationToken)
+                .ConfigureAwait(false);
         }
 
         public ConnectHandle ConnectSendObserver(ISendObserver observer)
@@ -49,63 +63,42 @@ namespace MassTransit.KafkaIntegration
 
 
         class SendPipe :
-            IPipe<ProducerContext<TKey, TValue>>
+            IPipe<ProducerContext>
         {
             readonly CancellationToken _cancellationToken;
             readonly KafkaSendTransportContext<TKey, TValue> _context;
+            readonly IPipe<SendContext<TValue>> _initializerPipe;
             readonly TKey _key;
             readonly IPipe<KafkaSendContext<TKey, TValue>> _pipe;
-            readonly IPipe<SendContext<TValue>> _sendPipe;
             readonly TValue _value;
 
             public SendPipe(KafkaSendTransportContext<TKey, TValue> context, TKey key, TValue value, IPipe<KafkaSendContext<TKey, TValue>> pipe,
-                CancellationToken cancellationToken, IPipe<SendContext<TValue>> sendPipe = null)
+                CancellationToken cancellationToken, IPipe<SendContext<TValue>> initializerPipe = null)
             {
                 _context = context;
                 _key = key;
                 _value = value;
                 _pipe = pipe;
                 _cancellationToken = cancellationToken;
-                _sendPipe = sendPipe;
+                _initializerPipe = initializerPipe;
             }
 
-            public async Task Send(ProducerContext<TKey, TValue> context)
+            public async Task Send(ProducerContext context)
             {
                 LogContext.SetCurrentIfNull(_context.LogContext);
 
-                var sendContext = new KafkaMessageSendContext<TKey, TValue>(_key, _value, _cancellationToken) { DestinationAddress = _context.TopicAddress };
+                KafkaSendContext<TKey, TValue> sendContext =
+                    await _context.CreateContext(_key, _value, _pipe, _cancellationToken, _initializerPipe).ConfigureAwait(false);
 
-                await _context.SendPipe.Send(sendContext).ConfigureAwait(false);
+                sendContext.CancellationToken.ThrowIfCancellationRequested();
 
-                if (_sendPipe.IsNotEmpty())
-                    await _sendPipe.Send(sendContext).ConfigureAwait(false);
-                if (_pipe.IsNotEmpty())
-                    await _pipe.Send(sendContext).ConfigureAwait(false);
-
-                sendContext.SourceAddress ??= _context.HostAddress;
-                sendContext.ConversationId ??= NewId.NextGuid();
-
-                StartedActivity? activity = LogContext.Current?.StartSendActivity(_context, sendContext,
-                    (nameof(sendContext.Partition), sendContext.Partition.ToString()));
+                StartedActivity? activity = LogContext.Current?.StartSendActivity(_context, sendContext);
                 try
                 {
                     if (_context.SendObservers.Count > 0)
                         await _context.SendObservers.PreSend(sendContext).ConfigureAwait(false);
 
-                    var message = new Message<TKey, TValue>
-                    {
-                        Key = sendContext.Key,
-                        Value = sendContext.Message
-                    };
-
-                    if (sendContext.SentTime.HasValue)
-                        message.Timestamp = new Timestamp(sendContext.SentTime.Value);
-
-                    message.Headers = context.HeadersSerializer.Serialize(sendContext);
-
-                    var topic = new TopicPartition(_context.TopicAddress.Topic, sendContext.Partition);
-
-                    await context.Produce(topic, message, sendContext.CancellationToken).ConfigureAwait(false);
+                    await _context.Send(context, sendContext).ConfigureAwait(false);
 
                     activity?.Update(sendContext);
                     sendContext.LogSent();
@@ -119,6 +112,8 @@ namespace MassTransit.KafkaIntegration
 
                     if (_context.SendObservers.Count > 0)
                         await _context.SendObservers.SendFault(sendContext, exception).ConfigureAwait(false);
+
+                    activity?.AddExceptionEvent(exception);
 
                     throw;
                 }

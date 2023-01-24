@@ -7,24 +7,22 @@ namespace MassTransit.KafkaIntegration.Checkpoints
     using System.Threading.Tasks;
     using Confluent.Kafka;
     using Internals;
-    using Util;
 
 
-    public class BatchCheckpointer<TKey, TValue> :
+    public class BatchCheckpointer :
         ICheckpointer
     {
         readonly Channel<IPendingConfirmation> _channel;
         readonly Task _checkpointTask;
-        readonly IConsumer<TKey, TValue> _consumer;
-        readonly ChannelExecutor _executor;
+        readonly IConsumer<byte[], byte[]> _consumer;
         readonly ReceiveSettings _settings;
-        readonly CancellationTokenSource _shutdownTokenSource;
+        readonly CancellationToken _cancellationToken;
 
-        public BatchCheckpointer(ChannelExecutor executor, IConsumer<TKey, TValue> consumer, ReceiveSettings settings)
+        public BatchCheckpointer(IConsumer<byte[], byte[]> consumer, ReceiveSettings settings, CancellationToken cancellationToken)
         {
-            _executor = executor;
             _consumer = consumer;
             _settings = settings;
+            _cancellationToken = cancellationToken;
             var channelOptions = new BoundedChannelOptions(settings.MessageLimit)
             {
                 AllowSynchronousContinuations = false,
@@ -35,7 +33,6 @@ namespace MassTransit.KafkaIntegration.Checkpoints
 
             _channel = Channel.CreateBounded<IPendingConfirmation>(channelOptions);
             _checkpointTask = Task.Run(WaitForBatch);
-            _shutdownTokenSource = new CancellationTokenSource();
         }
 
         public async Task Pending(IPendingConfirmation confirmation)
@@ -47,18 +44,14 @@ namespace MassTransit.KafkaIntegration.Checkpoints
         {
             _channel.Writer.Complete();
 
-            _shutdownTokenSource.Cancel();
-
             await _checkpointTask.ConfigureAwait(false);
-
-            _shutdownTokenSource.Dispose();
         }
 
         async Task WaitForBatch()
         {
             try
             {
-                while (await _channel.Reader.WaitToReadAsync().ConfigureAwait(false))
+                while (await _channel.Reader.WaitToReadAsync(_cancellationToken).ConfigureAwait(false))
                     await ReadBatch().ConfigureAwait(false);
             }
             catch (OperationCanceledException)
@@ -76,8 +69,8 @@ namespace MassTransit.KafkaIntegration.Checkpoints
         async Task ReadBatch()
         {
             var timeoutToken = new CancellationTokenSource(_settings.CheckpointInterval);
-            var batchToken = CancellationTokenSource.CreateLinkedTokenSource(timeoutToken.Token, _shutdownTokenSource.Token);
-            var batch = new List<IPendingConfirmation>();
+            var batchToken = CancellationTokenSource.CreateLinkedTokenSource(timeoutToken.Token, _cancellationToken);
+            var batch = new List<IPendingConfirmation>(_settings.CheckpointMessageCount);
 
             try
             {
@@ -87,7 +80,7 @@ namespace MassTransit.KafkaIntegration.Checkpoints
                     {
                         var confirmation = await _channel.Reader.ReadAsync(batchToken.Token).ConfigureAwait(false);
 
-                        await confirmation.Confirmed.OrCanceled(_shutdownTokenSource.Token).ConfigureAwait(false);
+                        await confirmation.Confirmed.OrCanceled(_cancellationToken).ConfigureAwait(false);
 
                         batch.Add(confirmation);
 
@@ -95,11 +88,11 @@ namespace MassTransit.KafkaIntegration.Checkpoints
                             break;
                     }
                 }
-                catch (OperationCanceledException exception) when (exception.CancellationToken == batchToken.Token && batch.Count > 0)
+                catch (Exception) when (batch.Count > 0)
                 {
                 }
 
-                await _executor.Run(() => Checkpoint(batch)).ConfigureAwait(false);
+                Checkpoint(batch);
             }
             catch (OperationCanceledException exception) when (exception.CancellationToken == batchToken.Token)
             {
@@ -130,8 +123,11 @@ namespace MassTransit.KafkaIntegration.Checkpoints
 
         bool TryCheckpoint(IPendingConfirmation confirmation)
         {
+            _cancellationToken.ThrowIfCancellationRequested();
+
             var offset = confirmation.Offset + 1;
-            LogContext.Debug?.Log("Partition: {PartitionId} updating checkpoint with offset: {Offset}", confirmation.Partition, offset);
+            LogContext.Debug?.Log("Partition: {PartitionId} updating checkpoint with offset: {Offset} on {MemberId}", confirmation.Partition, offset,
+                _consumer.MemberId);
             try
             {
                 _consumer.Commit(new[] { new TopicPartitionOffset(confirmation.Partition, offset) });
@@ -139,7 +135,8 @@ namespace MassTransit.KafkaIntegration.Checkpoints
             }
             catch (KafkaException exception)
             {
-                LogContext.Error?.Log(exception, "Partition: {PartitionId} checkpoint failed with offset: {Offset}", confirmation.Partition, offset);
+                LogContext.Error?.Log(exception, "Partition: {PartitionId} checkpoint failed with offset: {Offset} on {MemberId}", confirmation.Partition,
+                    offset, _consumer.MemberId);
 
                 if (exception.Error.IsLocalError)
                     throw;

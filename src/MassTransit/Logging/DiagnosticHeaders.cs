@@ -20,28 +20,39 @@ namespace MassTransit.Logging
 
         public const string MessageTypes = "messaging.masstransit.message_types";
 
+        public const string ConsumerType = "messaging.masstransit.consumer_type";
+
         public const string PeerAddress = "peer.address";
-        public const string ServiceName = "service.name";
 
         public const string BeginState = "messaging.masstransit.begin_state";
         public const string EndState = "messaging.masstransit.end_state";
         public const string SagaId = "messaging.masstransit.saga_id";
 
 
+        public class Exceptions
+        {
+            public const string EventName = "exception";
+            public const string Type = "exception.type";
+            public const string Message = "exception.message";
+            public const string Escaped = "exception.escaped";
+            public const string Stacktrace = "exception.stacktrace";
+        }
+
+
         public static class Messaging
         {
             public const string BodyLength = "messaging.message_payload_size_bytes";
-            public const string ConversationId = "messaging.conversation_id";
-            public const string Destination = "messaging.destination";
-            public const string DestinationKind = "messaging.destination_kind";
-            public const string TransportMessageId = "messaging.message_id";
+            public const string ConversationId = "messaging.message.conversation_id";
+            public const string DestinationName = "messaging.destination.name";
+            public const string DestinationKind = "messaging.destination.kind";
+            public const string TransportMessageId = "messaging.message.id";
             public const string Operation = "messaging.operation";
             public const string System = "messaging.system";
 
 
             public static class RabbitMq
             {
-                public const string RoutingKey = "messaging.rabbitmq.routing_key";
+                public const string RoutingKey = "messaging.rabbitmq.destination.routing_key";
             }
         }
     }

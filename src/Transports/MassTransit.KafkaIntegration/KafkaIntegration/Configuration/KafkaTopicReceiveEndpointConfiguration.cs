@@ -10,27 +10,26 @@ namespace MassTransit.KafkaIntegration.Configuration
 
 
     public class KafkaTopicReceiveEndpointConfiguration<TKey, TValue> :
-        ReceiverConfiguration,
+        ReceiveEndpointConfiguration,
         ReceiveSettings,
         IKafkaTopicReceiveEndpointConfigurator<TKey, TValue>
         where TValue : class
     {
         readonly IBusInstance _busInstance;
         readonly ConsumerConfig _consumerConfig;
-        readonly PipeConfigurator<ConsumerContext<TKey, TValue>> _consumerConfigurator;
+        readonly PipeConfigurator<ConsumerContext> _consumerConfigurator;
         readonly IReceiveEndpointConfiguration _endpointConfiguration;
         readonly IKafkaHostConfiguration _hostConfiguration;
         readonly Action<IClient, string> _oAuthBearerTokenRefreshHandler;
         readonly IOptionsSet _options;
         IHeadersDeserializer _headersDeserializer;
         IDeserializer<TKey> _keyDeserializer;
-        Action<IConsumer<TKey, TValue>, CommittedOffsets> _offsetsCommittedHandler;
+        Action<CommittedOffsets> _offsetsCommittedHandler;
         IDeserializer<TValue> _valueDeserializer;
 
         public KafkaTopicReceiveEndpointConfiguration(IKafkaHostConfiguration hostConfiguration, ConsumerConfig consumerConfig, string topic,
-            IBusInstance busInstance, IReceiveEndpointConfiguration endpointConfiguration, IHeadersDeserializer headersDeserializer,
-            Action<IClient, string> oAuthBearerTokenRefreshHandler)
-            : base(endpointConfiguration)
+            IBusInstance busInstance, IReceiveEndpointConfiguration endpointConfiguration, Action<IClient, string> oAuthBearerTokenRefreshHandler)
+            : base(busInstance.HostConfiguration, endpointConfiguration)
         {
             _hostConfiguration = hostConfiguration;
             _busInstance = busInstance;
@@ -40,18 +39,23 @@ namespace MassTransit.KafkaIntegration.Configuration
             _options = new OptionsSet();
             Topic = topic;
 
-            if (!SerializationUtils.DeSerializers.IsDefaultKeyType<TKey>())
-                SetKeyDeserializer(new MassTransitJsonDeserializer<TKey>());
+            SetKeyDeserializer(DeserializerTypes.TryGet<TKey>() ?? new MassTransitJsonDeserializer<TKey>());
             SetValueDeserializer(new MassTransitJsonDeserializer<TValue>());
-            SetHeadersDeserializer(headersDeserializer);
 
             CheckpointInterval = TimeSpan.FromMinutes(1);
             CheckpointMessageCount = 5000;
             MessageLimit = 10000;
-            ConcurrencyLimit = 1;
+            ConcurrentMessageLimit = 1;
+            ConcurrentDeliveryLimit = 1;
+            ConcurrentConsumerLimit = 1;
+            PrefetchCount = Math.Max(1000, CheckpointMessageCount / 10);
 
-            _consumerConfigurator = new PipeConfigurator<ConsumerContext<TKey, TValue>>();
+            _consumerConfigurator = new PipeConfigurator<ConsumerContext>();
+
+            PublishFaults = false;
         }
+
+        public override Uri HostAddress => _endpointConfiguration.HostAddress;
 
         public AutoOffsetReset? AutoOffsetReset
         {
@@ -144,6 +148,11 @@ namespace MassTransit.KafkaIntegration.Configuration
             _headersDeserializer = deserializer ?? throw new ArgumentNullException(nameof(deserializer));
         }
 
+        public void SetOffsetsCommittedHandler(Action<CommittedOffsets> offsetsCommittedHandler)
+        {
+            _offsetsCommittedHandler = _offsetsCommittedHandler ?? throw new ArgumentNullException(nameof(offsetsCommittedHandler));
+        }
+
         public void CreateIfMissing(Action<KafkaTopicOptions> configure)
         {
             if (_options.TryGetOptions<KafkaTopicOptions>(out _))
@@ -154,21 +163,13 @@ namespace MassTransit.KafkaIntegration.Configuration
             _options.Options(options);
         }
 
-        public void SetOffsetsCommittedHandler(Action<IConsumer<TKey, TValue>, CommittedOffsets> offsetsCommittedHandler)
-        {
-            if (_offsetsCommittedHandler != null)
-                throw new InvalidOperationException("Offset committed handler may not be specified more than once.");
+        public override Uri InputAddress => _endpointConfiguration.InputAddress;
 
-            _offsetsCommittedHandler = offsetsCommittedHandler ?? throw new ArgumentNullException(nameof(offsetsCommittedHandler));
-        }
-
+        public ushort ConcurrentConsumerLimit { get; set; }
+        public int ConcurrentDeliveryLimit { get; set; }
         public TimeSpan CheckpointInterval { set; get; }
 
-        public int ConcurrencyLimit
-        {
-            get => _endpointConfiguration.Transport.GetConcurrentMessageLimit();
-            set => ConcurrentMessageLimit = value;
-        }
+        int ReceiveSettings.ConcurrentMessageLimit => Transport.GetConcurrentMessageLimit();
 
         public string Topic { get; }
         public ushort MessageLimit { get; set; }
@@ -190,46 +191,47 @@ namespace MassTransit.KafkaIntegration.Configuration
                 yield return result;
         }
 
-        public ReceiveEndpoint Build()
+        public override ReceiveEndpointContext CreateReceiveEndpointContext()
+        {
+            return CreateReceiveKafkaEndpointContext();
+        }
+
+        KafkaReceiveEndpointContext<TKey, TValue> CreateReceiveKafkaEndpointContext()
         {
             var consumerConfig = _hostConfiguration.GetConsumerConfig(_consumerConfig);
 
-            ConsumerBuilder<TKey, TValue> CreateConsumerBuilder()
+            ConsumerBuilder<byte[], byte[]> CreateConsumerBuilder()
             {
-                ConsumerBuilder<TKey, TValue> consumerBuilder = new ConsumerBuilder<TKey, TValue>(consumerConfig)
-                    .SetValueDeserializer(_valueDeserializer)
+                ConsumerBuilder<byte[], byte[]> consumerBuilder = new ConsumerBuilder<byte[], byte[]>(consumerConfig)
                     .SetLogHandler((c, message) => _busInstance.HostConfiguration.ReceiveLogContext?.Debug?.Log(message.Message));
 
-                if (_keyDeserializer != null)
-                    consumerBuilder.SetKeyDeserializer(_keyDeserializer);
                 if (_offsetsCommittedHandler != null)
-                    consumerBuilder.SetOffsetsCommittedHandler(_offsetsCommittedHandler);
+                    consumerBuilder.SetOffsetsCommittedHandler((_, offsets) => _offsetsCommittedHandler(offsets));
                 if (_oAuthBearerTokenRefreshHandler != null)
                     consumerBuilder.SetOAuthBearerTokenRefreshHandler(_oAuthBearerTokenRefreshHandler);
 
                 return consumerBuilder;
             }
 
-            KafkaReceiveEndpointContext<TKey, TValue> CreateContext()
-            {
-                var builder = new KafkaReceiveEndpointBuilder<TKey, TValue>(_busInstance, _endpointConfiguration, _hostConfiguration, this,
-                    _headersDeserializer, CreateConsumerBuilder);
-                foreach (var specification in Specifications)
-                    specification.Configure(builder);
+            var builder = new KafkaReceiveEndpointBuilder<TKey, TValue>(_busInstance, _hostConfiguration, consumerConfig.GroupId, this,
+                this, _headersDeserializer, _keyDeserializer, _valueDeserializer, CreateConsumerBuilder);
+            ApplySpecifications(builder);
 
-                return builder.CreateReceiveEndpointContext();
-            }
+            return builder.CreateReceiveEndpointContext();
+        }
 
-            KafkaReceiveEndpointContext<TKey, TValue> context = CreateContext();
+        public ReceiveEndpoint Build()
+        {
+            KafkaReceiveEndpointContext<TKey, TValue> context = CreateReceiveKafkaEndpointContext();
 
             if (_options.TryGetOptions(out KafkaTopicOptions options))
                 _consumerConfigurator.UseFilter(new ConfigureKafkaTopologyFilter<TKey, TValue>(_hostConfiguration.Configuration, options));
 
             _consumerConfigurator.UseFilter(new KafkaConsumerFilter<TKey, TValue>(context));
 
-            IPipe<ConsumerContext<TKey, TValue>> consumerPipe = _consumerConfigurator.Build();
+            IPipe<ConsumerContext> consumerPipe = _consumerConfigurator.Build();
 
-            var transport = new ReceiveTransport<ConsumerContext<TKey, TValue>>(_busInstance.HostConfiguration, context,
+            var transport = new ReceiveTransport<ConsumerContext>(_busInstance.HostConfiguration, context,
                 () => context.ConsumerContextSupervisor, consumerPipe);
 
             return new ReceiveEndpoint(transport, context);

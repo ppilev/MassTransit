@@ -2,7 +2,7 @@
   <Import Project="../../../signing.props" />
 
   <PropertyGroup>
-    <TargetFrameworks>netstandard2.0;netcoreapp3.1;net6.0</TargetFrameworks>
+    <TargetFrameworks>netstandard2.0;net6.0</TargetFrameworks>
   </PropertyGroup>
 
   <PropertyGroup Condition=" '$(IsWindows)' == 'true' ">
@@ -17,12 +17,12 @@
     <PackageId>MassTransit.AmazonSQS</PackageId>
     <Title>MassTransit.AmazonSQS</Title>
     <PackageTags>MassTransit;AmazonSQS</PackageTags>
-    <Description>MassTransit ActiveMQ transport support; $(Description)</Description>
+    <Description>MassTransit Amazon SQS transport support; $(Description)</Description>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AWSSDK.SimpleNotificationService" Version="3.7.3.57" />
-    <PackageReference Include="AWSSDK.SQS" Version="3.7.2.54" />
+    <PackageReference Include="AWSSDK.SimpleNotificationService" Version="3.7.100.47" />
+    <PackageReference Include="AWSSDK.SQS" Version="3.7.100.46" />
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="1.1.1" PrivateAssets="All" />
   </ItemGroup>
 

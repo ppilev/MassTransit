@@ -81,7 +81,7 @@ namespace MassTransit.RedisIntegration.Saga
                 var databaseContext = new RedisDatabaseContext<TSaga>(database, _options);
                 var instances = new List<TSaga>();
 
-                var redisEntry = await databaseContext.Load(redisKey);
+                var redisEntry = await databaseContext.Load(context.SerializerContext, redisKey);
                 var sagas = new IndexedSagaDictionary<TSaga>();
                 var factory = new InMemorySagaConsumeContextFactory<TSaga>();
 

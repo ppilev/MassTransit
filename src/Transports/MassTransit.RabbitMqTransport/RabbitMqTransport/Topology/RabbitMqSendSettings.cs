@@ -4,6 +4,7 @@ namespace MassTransit.RabbitMqTransport.Topology
     using System.Collections.Generic;
     using System.Linq;
     using Configuration;
+    using RabbitMQ.Client;
 
 
     public class RabbitMqSendSettings :
@@ -35,6 +36,9 @@ namespace MassTransit.RabbitMqTransport.Topology
 
             if (!string.IsNullOrWhiteSpace(address.AlternateExchange))
                 SetExchangeArgument("alternate-exchange", address.AlternateExchange);
+
+            if (address.SingleActiveConsumer)
+                SetQueueArgument(Headers.XSingleActiveConsumer, true);
         }
 
         public IDictionary<string, object> QueueArguments { get; }
@@ -76,11 +80,11 @@ namespace MassTransit.RabbitMqTransport.Topology
 
         public void BindToExchange(string exchangeName, Action<IRabbitMqExchangeBindingConfigurator> configure = null)
         {
-            var configurator = new RabbitMqExchangeBindingConfigurator(exchangeName, RabbitMQ.Client.ExchangeType.Fanout, Durable, AutoDelete, "");
+            var specification = new ExchangeBindingPublishTopologySpecification(exchangeName, RabbitMQ.Client.ExchangeType.Fanout, Durable, AutoDelete);
 
-            configure?.Invoke(configurator);
+            configure?.Invoke(specification);
 
-            _exchangeBindings.Add(new ExchangeBindingPublishTopologySpecification(configurator));
+            _exchangeBindings.Add(specification);
         }
 
         public void SetQueueArgument(string key, object value)

@@ -2,6 +2,7 @@ namespace MassTransit.Serialization.JsonConverters
 {
     using System;
     using System.Collections.Generic;
+    using System.Globalization;
     using System.Text.Json;
     using System.Text.Json.Serialization;
 
@@ -45,49 +46,73 @@ namespace MassTransit.Serialization.JsonConverters
 
         static void WriteValue(Utf8JsonWriter writer, string key, object objectValue, JsonSerializerOptions options)
         {
-            if (key != null)
-                writer.WritePropertyName(key);
+            if (key == null)
+                return;
+
+            var ignoreDefault = options.DefaultIgnoreCondition == JsonIgnoreCondition.WhenWritingDefault;
+            var ignoreNull = ignoreDefault || options.DefaultIgnoreCondition == JsonIgnoreCondition.WhenWritingNull;
+
+            if (objectValue == null && ignoreNull)
+                return;
 
             switch (objectValue)
             {
-                case string stringValue:
-                    writer.WriteStringValue(stringValue);
+                case null:
+                    writer.WriteNull(key);
                     break;
-                case DateTime dateTime:
-                    writer.WriteStringValue(dateTime);
+                case string value:
+                    writer.WriteString(key, value);
                     break;
-                case DateTimeOffset dateTime:
-                    writer.WriteStringValue(dateTime);
+                case DateTime value:
+                    if (value != default)
+                        writer.WriteString(key, value);
                     break;
-                case Guid guid:
-                    writer.WriteStringValue(guid.ToString("D"));
+                case DateTimeOffset value:
+                    if (value != default)
+                        writer.WriteString(key, value);
                     break;
-                case long longValue:
-                    writer.WriteNumberValue(longValue);
+                case Guid value:
+                    if (value != default)
+                        writer.WriteString(key, value.ToString("D"));
                     break;
-                case int intValue:
-                    writer.WriteNumberValue(intValue);
+                case long value:
+                    if (value != default || !ignoreDefault)
+                        writer.WriteNumber(key, value);
                     break;
-                case short shortValue:
-                    writer.WriteNumberValue(shortValue);
+                case int value:
+                    if (value != default || !ignoreDefault)
+                        writer.WriteNumber(key, value);
                     break;
-                case byte byteValue:
-                    writer.WriteNumberValue(byteValue);
+                case short value:
+                    if (value != default || !ignoreDefault)
+                        writer.WriteNumber(key, value);
                     break;
-                case float floatValue:
-                    writer.WriteNumberValue(floatValue);
+                case byte value:
+                    if (value != default || !ignoreDefault)
+                        writer.WriteNumber(key, value);
                     break;
-                case double doubleValue:
-                    writer.WriteNumberValue(doubleValue);
+                case float value:
+                    writer.WriteNumber(key, value);
                     break;
-                case decimal decimalValue:
-                    writer.WriteNumberValue(decimalValue);
+                case double value:
+                    writer.WriteNumber(key, value);
                     break;
-                case bool boolValue:
-                    writer.WriteBooleanValue(boolValue);
+                case decimal value:
+                    if (value != default || !ignoreDefault)
+                    {
+                        var text = Convert.ToString(value, CultureInfo.InvariantCulture);
+                        if (!string.IsNullOrWhiteSpace(text))
+                            writer.WriteString(key, text);
+                    }
+
+                    break;
+                case bool value:
+                    if (value || !ignoreDefault)
+                        writer.WriteBoolean(key, value);
                     break;
 
                 default:
+                    writer.WritePropertyName(key);
                     JsonSerializer.Serialize(writer, objectValue, options);
                     break;
             }
@@ -95,6 +120,9 @@ namespace MassTransit.Serialization.JsonConverters
 
         static Dictionary<string, object> ReadObject(ref Utf8JsonReader reader, JsonSerializerOptions options)
         {
+            var ignoreDefault = options.DefaultIgnoreCondition == JsonIgnoreCondition.WhenWritingDefault;
+            var ignoreNull = ignoreDefault || options.DefaultIgnoreCondition == JsonIgnoreCondition.WhenWritingNull;
+
             var dictionary = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
             while (reader.Read())
             {
@@ -111,7 +139,9 @@ namespace MassTransit.Serialization.JsonConverters
 
                 reader.Read();
 
-                dictionary.Add(propertyName, ReadPropertyValue(ref reader, options));
+                var value = ReadPropertyValue(ref reader, options);
+                if (value != null || !ignoreNull)
+                    dictionary[propertyName] = value;
             }
 
             return dictionary;
@@ -119,6 +149,9 @@ namespace MassTransit.Serialization.JsonConverters
 
         static Dictionary<string, object> ReadArray(ref Utf8JsonReader reader, JsonSerializerOptions options)
         {
+            var ignoreDefault = options.DefaultIgnoreCondition == JsonIgnoreCondition.WhenWritingDefault;
+            var ignoreNull = ignoreDefault || options.DefaultIgnoreCondition == JsonIgnoreCondition.WhenWritingNull;
+
             var dictionary = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
             while (reader.Read())
             {
@@ -128,8 +161,12 @@ namespace MassTransit.Serialization.JsonConverters
                 if (reader.TokenType == JsonTokenType.StartObject)
                 {
                     Dictionary<string, object> elementDictionary = ReadObject(ref reader, options);
-                    if (elementDictionary.TryGetValue("Key", out string key) && elementDictionary.TryGetValue("Value", out var value))
-                        dictionary.Add(key, value);
+                    if (elementDictionary.TryGetValue("Key", out string key) && !string.IsNullOrWhiteSpace(key)
+                        && elementDictionary.TryGetValue("Value", out var value))
+                    {
+                        if (value != null || !ignoreNull)
+                            dictionary[key] = value;
+                    }
                 }
                 else
                     throw new JsonException($"Expected object (key/value), found: {reader.TokenType}");

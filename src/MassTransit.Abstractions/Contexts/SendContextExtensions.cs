@@ -56,6 +56,7 @@ namespace MassTransit
             headers.Set(MessageHeaders.Reason, "fault");
 
             headers.Set(MessageHeaders.FaultExceptionType, TypeCache.GetShortName(exception.GetType()));
+            headers.Set(MessageHeaders.FaultInputAddress, exceptionContext.InputAddress?.ToString());
             headers.Set(MessageHeaders.FaultMessage, exceptionMessage);
             headers.Set(MessageHeaders.FaultTimestamp, exceptionContext.ExceptionTimestamp.ToString("O"));
             headers.Set(MessageHeaders.FaultStackTrace, ExceptionUtil.GetStackTrace(exception));
@@ -86,6 +87,7 @@ namespace MassTransit
             adapter.Set(headers, MessageHeaders.Reason, "fault");
 
             adapter.Set(headers, MessageHeaders.FaultExceptionType, TypeCache.GetShortName(exception.GetType()));
+            adapter.Set(headers, MessageHeaders.FaultInputAddress, exceptionContext.InputAddress);
             adapter.Set(headers, MessageHeaders.FaultMessage, exceptionMessage);
             adapter.Set(headers, MessageHeaders.FaultTimestamp, exceptionContext.ExceptionTimestamp);
             adapter.Set(headers, MessageHeaders.FaultStackTrace, ExceptionUtil.GetStackTrace(exception));
@@ -146,14 +148,26 @@ namespace MassTransit
         /// <returns></returns>
         public static SendContext ReplaceMessageId(this SendContext sendContext, ConsumeContext consumeContext)
         {
-            sendContext.Headers.Set(MessageHeaders.OriginalMessageId,
-                consumeContext.TryGetHeader(MessageHeaders.OriginalMessageId, out Guid? originalMessageId)
-                    ? originalMessageId.ToString()
-                    : consumeContext.MessageId.ToString());
+            if (consumeContext.TryGetHeader(MessageHeaders.OriginalMessageId, out Guid? originalMessageId) && originalMessageId.HasValue)
+                sendContext.Headers.Set(MessageHeaders.OriginalMessageId, originalMessageId.ToString());
+            else if (sendContext.MessageId.HasValue)
+                sendContext.Headers.Set(MessageHeaders.OriginalMessageId, sendContext.MessageId.ToString());
 
             sendContext.MessageId = NewId.NextGuid();
 
             return sendContext;
+        }
+
+        /// <summary>
+        /// Returns the original MessageId from the message headers, or the MessageId if not present
+        /// </summary>
+        /// <param name="context"></param>
+        /// <returns></returns>
+        public static Guid? GetOriginalMessageId(this ConsumeContext context)
+        {
+            return context.TryGetHeader(MessageHeaders.OriginalMessageId, out Guid? originalMessageId)
+                ? originalMessageId
+                : context.MessageId;
         }
 
         /// <summary>

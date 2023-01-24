@@ -6,6 +6,7 @@
     using System.Net;
     using System.Threading;
     using System.Threading.Tasks;
+    using BusOutbox;
     using Latency;
     using NDesk.Options;
     using RequestResponse;
@@ -45,14 +46,13 @@
                 }
 
                 if (optionSet.Benchmark.HasFlag(ProgramOptionSet.BenchmarkOptions.Latency))
-                {
                     await RunLatencyBenchmark(optionSet);
-                }
 
                 if (optionSet.Benchmark.HasFlag(ProgramOptionSet.BenchmarkOptions.Rpc))
-                {
                     RunRequestResponseBenchmark(optionSet);
-                }
+
+                if (optionSet.Benchmark.HasFlag(ProgramOptionSet.BenchmarkOptions.BusOutbox))
+                    await Task.Run(() => RunBusOutboxBenchmark(optionSet));
 
                 if (Debugger.IsAttached)
                 {
@@ -130,10 +130,17 @@
 
                 transport = new GrpcMessageLatencyTransport(grpcOptionSet, settings);
             }
-            else if (optionSet.Transport == ProgramOptionSet.TransportOptions.Mediator)
+            else if (optionSet.Transport == ProgramOptionSet.TransportOptions.Kafka)
             {
-                transport = new MediatorMessageLatencyTransport(settings);
+                var kafkaOptionSet = new KafkaOptionSet();
+                kafkaOptionSet.Parse(_remaining);
+
+                kafkaOptionSet.ShowOptions();
+
+                transport = new KafkaMessageLatencyTransport(kafkaOptionSet, settings);
             }
+            else if (optionSet.Transport == ProgramOptionSet.TransportOptions.Mediator)
+                transport = new MediatorMessageLatencyTransport(settings);
             else
             {
                 var inMemoryOptionSet = new InMemoryOptionSet();
@@ -181,9 +188,7 @@
                 transport = new RabbitMqRequestResponseTransport(rabbitMqOptionSet, settings);
             }
             else if (optionSet.Transport == ProgramOptionSet.TransportOptions.Mediator)
-            {
                 transport = new MediatorRequestResponseTransport(settings);
-            }
             else
             {
                 var inMemoryOptionSet = new InMemoryOptionSet();
@@ -197,6 +202,50 @@
             var benchmark = new RequestResponseBenchmark(transport, settings);
 
             benchmark.Run();
+        }
+
+        static async Task RunBusOutboxBenchmark(ProgramOptionSet optionSet)
+        {
+            var busOutboxBenchmarkOptions = new BusOutboxBenchmarkOptions();
+
+            busOutboxBenchmarkOptions.Parse(_remaining);
+
+            IConfigureBusOutboxTransport transport;
+            if (optionSet.Transport == ProgramOptionSet.TransportOptions.RabbitMq)
+            {
+                var rabbitMqOptionSet = new RabbitMqOptionSet();
+                rabbitMqOptionSet.Parse(_remaining);
+
+                rabbitMqOptionSet.ShowOptions();
+
+                transport = new RabbitMqConfigureBusOutboxTransport(rabbitMqOptionSet, busOutboxBenchmarkOptions);
+            }
+            else if (optionSet.Transport == ProgramOptionSet.TransportOptions.AzureServiceBus)
+            {
+                var serviceBusOptionSet = new ServiceBusOptionSet();
+
+                serviceBusOptionSet.Parse(_remaining);
+
+                serviceBusOptionSet.ShowOptions();
+
+                ServicePointManager.Expect100Continue = false;
+                ServicePointManager.UseNagleAlgorithm = false;
+
+                transport = new ServiceBusConfigureBusOutboxTransport(serviceBusOptionSet, busOutboxBenchmarkOptions);
+            }
+            else
+            {
+                var inMemoryOptionSet = new InMemoryOptionSet();
+                inMemoryOptionSet.Parse(_remaining);
+
+                inMemoryOptionSet.ShowOptions();
+
+                transport = new InMemoryConfigureBusOutboxTransport(inMemoryOptionSet, busOutboxBenchmarkOptions);
+            }
+
+            var benchmark = new BusOutboxBenchmark(transport, busOutboxBenchmarkOptions);
+
+            await benchmark.Run();
         }
 
         static void ShowHelp(OptionSet p)

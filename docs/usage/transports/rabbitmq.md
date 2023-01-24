@@ -69,6 +69,7 @@ MassTransit includes several host-level configuration options that control the b
 | Heartbeat                    | TimeSpan |The heartbeat interval used by the RabbitMQ client to keep the connection alive
 | RequestedChannelMax          | ushort | The maximum number of channels allowed on the connection
 | RequestedConnectionTimeout   | TimeSpan | The connection timeout
+| ContinuationTimeout          | TImeSpan | Sets the time the client will wait for the broker to response to RPC requests. Increase this value if you are experiencing timeouts from RabbitMQ due to a slow broker instance.
 
 #### UseCluster
 
@@ -82,7 +83,7 @@ MassTransit will briefly buffer messages before sending them to RabbitMQ, to inc
 
 |  Property               | Type   | Default |Description 
 |-------|------------------------|-----|--------|---
-| Enabled        | bool | true | Enable or disable batch sends to RabbitMQ
+| Enabled        | bool | false | Enable or disable batch sends to RabbitMQ
 | MessageLimit        | int | 100 | Limit the number of messages per batch
 | SizeLimit        | int | 64K | A rough limit of the total message size
 | Timeout        | TimeSpan | 1ms | The time to wait for additional messages before sending

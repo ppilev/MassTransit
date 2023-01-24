@@ -200,6 +200,7 @@ module.exports = {
                   '/advanced/middleware/scoped'
                 ]
               },
+              '/advanced/transactional-outbox',
               '/usage/message-data',
               {
                 title: 'Monitoring',
@@ -248,6 +249,10 @@ module.exports = {
         ]
       },
       {
+        title: 'Support',
+        path: '/support'
+      },
+      {
         title: 'Getting Help',
         path: '/learn/',
         collapsable: true,
@@ -258,7 +263,6 @@ module.exports = {
           '/learn/samples',
           '/learn/videos',
           '/learn/training',
-          '/learn/support',
           '/learn/loving-the-community',
           '/learn/contributing',
           '/getting-started/live-coding'

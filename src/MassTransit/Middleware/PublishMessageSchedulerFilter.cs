@@ -21,19 +21,14 @@ namespace MassTransit.Middleware
         [DebuggerNonUserCode]
         Task IFilter<ConsumeContext>.Send(ConsumeContext context, IPipe<ConsumeContext> next)
         {
-            MessageSchedulerContext PayloadFactory()
-            {
-                IMessageScheduler Factory()
-                {
-                    return new MessageScheduler(new PublishScheduleMessageProvider(context), context.GetPayload<IBusTopology>());
-                }
-
-                return new ConsumeMessageSchedulerContext(Factory, context.ReceiveContext.InputAddress);
-            }
-
-            context.GetOrAddPayload(PayloadFactory);
+            context.GetOrAddPayload<MessageSchedulerContext>(() => new ConsumeMessageSchedulerContext(context, SchedulerFactory));
 
             return next.Send(context);
+        }
+
+        static IMessageScheduler SchedulerFactory(ConsumeContext context)
+        {
+            return new MessageScheduler(new PublishScheduleMessageProvider(context), context.GetPayload<IBusTopology>());
         }
     }
 }

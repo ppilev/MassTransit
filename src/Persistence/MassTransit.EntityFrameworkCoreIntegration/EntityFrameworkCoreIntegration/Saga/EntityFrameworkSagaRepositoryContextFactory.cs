@@ -5,7 +5,6 @@ namespace MassTransit.EntityFrameworkCoreIntegration.Saga
     using System.Linq;
     using System.Threading;
     using System.Threading.Tasks;
-    using EntityFrameworkCoreIntegration;
     using MassTransit.Saga;
     using Microsoft.EntityFrameworkCore;
     using Microsoft.EntityFrameworkCore.Storage;
@@ -47,21 +46,26 @@ namespace MassTransit.EntityFrameworkCoreIntegration.Saga
             var dbContext = _dbContextFactory.CreateScoped(context);
             try
             {
-                Task Send()
+                async Task SendAsyncCallback()
                 {
-                    return WithinTransaction(dbContext, context.CancellationToken, async () =>
-                    {
-                        using var repositoryContext = new DbContextSagaRepositoryContext<TSaga, T>(dbContext, context, _consumeContextFactory, _lockStrategy);
+                    using var repositoryContext = new DbContextSagaRepositoryContext<TSaga, T>(dbContext, context, _consumeContextFactory, _lockStrategy);
 
-                        await next.Send(repositoryContext).ConfigureAwait(false);
-                    });
+                    await next.Send(repositoryContext).ConfigureAwait(false);
                 }
 
-                var executionStrategy = dbContext.Database.CreateExecutionStrategy();
-                if (executionStrategy is ExecutionStrategy)
-                    await executionStrategy.ExecuteAsync(Send).ConfigureAwait(false);
+                if (context.TryGetPayload(out DbTransactionContext _))
+                    await SendAsyncCallback().ConfigureAwait(false);
                 else
-                    await Send().ConfigureAwait(false);
+                {
+                    var executionStrategy = dbContext.Database.CreateExecutionStrategy();
+                    if (executionStrategy is ExecutionStrategy)
+                    {
+                        await executionStrategy.ExecuteAsync(() => WithinTransaction(dbContext, context.CancellationToken, SendAsyncCallback))
+                            .ConfigureAwait(false);
+                    }
+                    else
+                        await WithinTransaction(dbContext, context.CancellationToken, SendAsyncCallback).ConfigureAwait(false);
+                }
             }
             finally
             {
@@ -75,28 +79,37 @@ namespace MassTransit.EntityFrameworkCoreIntegration.Saga
             var dbContext = _dbContextFactory.CreateScoped(context);
             try
             {
-                async Task Send()
+                async Task SendQueryAsyncCallback(SagaLockContext<TSaga> lockContext, SagaRepositoryContext<TSaga, T> repositoryContext)
+                {
+                    IList<TSaga> instances = await lockContext.Load().ConfigureAwait(false);
+
+                    var queryContext = new LoadedSagaRepositoryQueryContext<TSaga, T>(repositoryContext, instances);
+
+                    await next.Send(queryContext).ConfigureAwait(false);
+                }
+
+                async Task SendQueryAsync()
                 {
                     SagaLockContext<TSaga> lockContext =
                         await _lockStrategy.CreateLockContext(dbContext, query, context.CancellationToken).ConfigureAwait(false);
 
                     using var repositoryContext = new DbContextSagaRepositoryContext<TSaga, T>(dbContext, context, _consumeContextFactory, _lockStrategy);
 
-                    await WithinTransaction(dbContext, context.CancellationToken, async () =>
+                    if (context.TryGetPayload(out DbTransactionContext _))
+                        await SendQueryAsyncCallback(lockContext, repositoryContext).ConfigureAwait(false);
+                    else
                     {
-                        IList<TSaga> instances = await lockContext.Load().ConfigureAwait(false);
-
-                        var queryContext = new LoadedSagaRepositoryQueryContext<TSaga, T>(repositoryContext, instances);
-
-                        await next.Send(queryContext).ConfigureAwait(false);
-                    }).ConfigureAwait(false);
+                        // ReSharper disable once AccessToDisposedClosure
+                        await WithinTransaction(dbContext, context.CancellationToken, () => SendQueryAsyncCallback(lockContext, repositoryContext))
+                            .ConfigureAwait(false);
+                    }
                 }
 
                 var executionStrategy = dbContext.Database.CreateExecutionStrategy();
                 if (executionStrategy is ExecutionStrategy)
-                    await executionStrategy.ExecuteAsync(Send).ConfigureAwait(false);
+                    await executionStrategy.ExecuteAsync(() => SendQueryAsync()).ConfigureAwait(false);
                 else
-                    await Send().ConfigureAwait(false);
+                    await SendQueryAsync().ConfigureAwait(false);
             }
             finally
             {
@@ -110,7 +123,7 @@ namespace MassTransit.EntityFrameworkCoreIntegration.Saga
             var dbContext = _dbContextFactory.Create();
             try
             {
-                Task<T> Send()
+                Task<T> ExecuteAsync()
                 {
                     return WithinTransaction(dbContext, cancellationToken, () =>
                     {
@@ -122,9 +135,9 @@ namespace MassTransit.EntityFrameworkCoreIntegration.Saga
 
                 var executionStrategy = dbContext.Database.CreateExecutionStrategy();
                 if (executionStrategy is ExecutionStrategy)
-                    return await executionStrategy.ExecuteAsync(Send).ConfigureAwait(false);
+                    return await executionStrategy.ExecuteAsync(() => ExecuteAsync()).ConfigureAwait(false);
                 else
-                    return await Send().ConfigureAwait(false);
+                    return await ExecuteAsync().ConfigureAwait(false);
             }
             finally
             {
@@ -151,7 +164,7 @@ namespace MassTransit.EntityFrameworkCoreIntegration.Saga
             {
                 try
                 {
-                    await transaction.RollbackAsync().ConfigureAwait(false);
+                    await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
                 }
                 catch (Exception innerException)
                 {

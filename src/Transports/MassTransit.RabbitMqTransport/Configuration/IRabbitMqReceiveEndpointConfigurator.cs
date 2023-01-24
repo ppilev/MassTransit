@@ -22,17 +22,11 @@
         string DeadLetterExchange { set; }
 
         /// <summary>
-        /// Configure a management endpoint for this receive endpoint
-        /// </summary>
-        /// <param name="management"></param>
-        void ConnectManagementEndpoint(IReceiveEndpointConfigurator management);
-
-        /// <summary>
         /// Bind an exchange to the receive endpoint exchange
         /// </summary>
         /// <param name="exchangeName">The exchange name</param>
         /// <param name="callback">Configure the exchange and binding</param>
-        void Bind(string exchangeName, Action<IRabbitMqExchangeBindingConfigurator> callback = null);
+        void Bind(string exchangeName, Action<IRabbitMqExchangeToExchangeBindingConfigurator> callback = null);
 
         /// <summary>
         /// Bind an exchange to the receive endpoint exchange
@@ -60,5 +54,12 @@
         /// </summary>
         /// <param name="configure"></param>
         void ConfigureConnection(Action<IPipeConfigurator<ConnectionContext>> configure);
+
+        /// <summary>
+        /// By default, RabbitMQ assigns a dynamically generated consumer tag, which is always the right choice. In certain scenarios
+        /// where a specific consumer tag is needed, this will set it.
+        /// </summary>
+        /// <param name="consumerTag">The consumer tag to use for this receive endpoint.</param>
+        void OverrideConsumerTag(string consumerTag);
     }
 }

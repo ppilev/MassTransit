@@ -2,8 +2,6 @@ namespace MassTransit.RabbitMqTransport.Configuration
 {
     using System;
     using System.Collections.Generic;
-    using Components;
-    using JunkDrawer;
     using MassTransit.Configuration;
     using MassTransit.Middleware;
     using Middleware;
@@ -22,7 +20,6 @@ namespace MassTransit.RabbitMqTransport.Configuration
         readonly IRabbitMqEndpointConfiguration _endpointConfiguration;
         readonly IRabbitMqHostConfiguration _hostConfiguration;
         readonly Lazy<Uri> _inputAddress;
-        readonly IManagementPipe _managementPipe;
         readonly IBuildPipeConfigurator<ModelContext> _modelConfigurator;
         readonly RabbitMqReceiveSettings _settings;
 
@@ -35,7 +32,6 @@ namespace MassTransit.RabbitMqTransport.Configuration
 
             _endpointConfiguration = endpointConfiguration;
 
-            _managementPipe = new ManagementPipe();
             _connectionConfigurator = new PipeConfigurator<ConnectionContext>();
             _modelConfigurator = new PipeConfigurator<ModelContext>();
 
@@ -74,14 +70,22 @@ namespace MassTransit.RabbitMqTransport.Configuration
                 if (_settings.PurgeOnStartup)
                     _modelConfigurator.UseFilter(new PurgeOnStartupFilter(_settings.QueueName));
 
-                _modelConfigurator.UseFilter(new PrefetchCountFilter(_managementPipe, _settings.PrefetchCount));
-
+                _modelConfigurator.UseFilter(new PrefetchCountFilter(_settings.PrefetchCount));
                 _modelConfigurator.UseFilter(new RabbitMqConsumerFilter(context));
             }
 
             IPipe<ModelContext> modelPipe = _modelConfigurator.Build();
 
             var transport = new ReceiveTransport<ModelContext>(_hostConfiguration, context, () => context.ModelContextSupervisor, modelPipe);
+
+            if (IsBusEndpoint && _hostConfiguration.DeployPublishTopology)
+            {
+                var publishTopology = _hostConfiguration.Topology.PublishTopology;
+
+                var brokerTopology = publishTopology.GetPublishBrokerTopology();
+
+                transport.PreStartPipe = new ConfigureRabbitMqTopologyFilter<IPublishTopology>(publishTopology, brokerTopology).ToPipe();
+            }
 
             var receiveEndpoint = new ReceiveEndpoint(transport, context);
 
@@ -211,13 +215,7 @@ namespace MassTransit.RabbitMqTransport.Configuration
             _settings.SetQuorumQueue(replicationFactor);
         }
 
-        public void ConnectManagementEndpoint(IReceiveEndpointConfigurator management)
-        {
-            var consumer = new SetPrefetchCountConsumer(_managementPipe, _settings.QueueName);
-            management.Instance(consumer);
-        }
-
-        public void Bind(string exchangeName, Action<IRabbitMqExchangeBindingConfigurator> callback)
+        public void Bind(string exchangeName, Action<IRabbitMqExchangeToExchangeBindingConfigurator> callback)
         {
             if (exchangeName == null)
                 throw new ArgumentNullException(nameof(exchangeName));
@@ -246,6 +244,11 @@ namespace MassTransit.RabbitMqTransport.Configuration
         public void ConfigureConnection(Action<IPipeConfigurator<ConnectionContext>> configure)
         {
             configure?.Invoke(_connectionConfigurator);
+        }
+
+        public void OverrideConsumerTag(string consumerTag)
+        {
+            _settings.ConsumerTag = consumerTag;
         }
 
         RabbitMqReceiveEndpointContext CreateRabbitMqReceiveEndpointContext()

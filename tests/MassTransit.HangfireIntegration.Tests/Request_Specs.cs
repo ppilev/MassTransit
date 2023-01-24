@@ -5,7 +5,6 @@
         using System;
         using System.Threading.Tasks;
         using NUnit.Framework;
-        using Saga;
         using Testing;
 
 
@@ -101,7 +100,7 @@
                 {
                     Console.WriteLine("Name validated: {0}", context.Message.CorrelationId);
 
-                    await context.RespondAsync<NameValidated>(new {RequestName = context.Message.Name});
+                    await context.RespondAsync<NameValidated>(new { RequestName = context.Message.Name });
                 });
             }
         }
@@ -118,6 +117,7 @@
 
             public Uri ServiceAddress { get; }
             public TimeSpan Timeout { get; }
+            public TimeSpan? TimeToLive { get; }
         }
 
 

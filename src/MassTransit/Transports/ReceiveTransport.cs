@@ -13,10 +13,10 @@ namespace MassTransit.Transports
     {
         readonly ReceiveEndpointContext _context;
         readonly IHostConfiguration _hostConfiguration;
-        readonly Func<ISupervisor<TContext>> _supervisorFactory;
+        readonly Func<ITransportSupervisor<TContext>> _supervisorFactory;
         readonly IPipe<TContext> _transportPipe;
 
-        public ReceiveTransport(IHostConfiguration hostConfiguration, ReceiveEndpointContext context, Func<ISupervisor<TContext>> supervisorFactory,
+        public ReceiveTransport(IHostConfiguration hostConfiguration, ReceiveEndpointContext context, Func<ITransportSupervisor<TContext>> supervisorFactory,
             IPipe<TContext> transportPipe)
         {
             _hostConfiguration = hostConfiguration;
@@ -24,6 +24,8 @@ namespace MassTransit.Transports
             _supervisorFactory = supervisorFactory;
             _transportPipe = transportPipe;
         }
+
+        public IPipe<TContext> PreStartPipe { get; set; }
 
         public void Probe(ProbeContext context)
         {
@@ -39,7 +41,7 @@ namespace MassTransit.Transports
         /// <returns>A task that is completed once the transport is shut down</returns>
         public ReceiveTransportHandle Start()
         {
-            return new ReceiveTransportAgent(_hostConfiguration.ReceiveTransportRetryPolicy, _context, _supervisorFactory, _transportPipe);
+            return new ReceiveTransportAgent(_hostConfiguration.ReceiveTransportRetryPolicy, _context, _supervisorFactory, _transportPipe, PreStartPipe);
         }
 
         public ConnectHandle ConnectReceiveObserver(IReceiveObserver observer)
@@ -68,18 +70,20 @@ namespace MassTransit.Transports
             ReceiveTransportHandle
         {
             readonly ReceiveEndpointContext _context;
+            readonly IPipe<TContext> _preStartPipe;
             readonly IRetryPolicy _retryPolicy;
-            readonly Func<ISupervisor<TContext>> _supervisorFactory;
+            readonly Func<ITransportSupervisor<TContext>> _supervisorFactory;
             readonly IPipe<TContext> _transportPipe;
-            ISupervisor<TContext> _supervisor;
+            ITransportSupervisor<TContext> _supervisor;
 
-            public ReceiveTransportAgent(IRetryPolicy retryPolicy, ReceiveEndpointContext context, Func<ISupervisor<TContext>> supervisorFactory,
-                IPipe<TContext> transportPipe)
+            public ReceiveTransportAgent(IRetryPolicy retryPolicy, ReceiveEndpointContext context, Func<ITransportSupervisor<TContext>> supervisorFactory,
+                IPipe<TContext> transportPipe, IPipe<TContext> preStartPipe)
             {
                 _retryPolicy = retryPolicy;
                 _context = context;
                 _supervisorFactory = supervisorFactory;
                 _transportPipe = transportPipe;
+                _preStartPipe = preStartPipe;
 
                 var receiver = Task.Run(Run);
 
@@ -181,6 +185,9 @@ namespace MassTransit.Transports
                 try
                 {
                     _supervisor = _supervisorFactory();
+
+                    if (_preStartPipe.IsNotEmpty())
+                        await _supervisor.Send(_preStartPipe, Stopping).ConfigureAwait(false);
 
                     await _context.OnTransportStartup(_supervisor, Stopping).ConfigureAwait(false);
 

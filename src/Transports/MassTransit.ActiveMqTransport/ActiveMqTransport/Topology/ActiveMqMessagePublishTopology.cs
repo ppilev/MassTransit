@@ -14,6 +14,7 @@ namespace MassTransit.ActiveMqTransport.Topology
         readonly ActiveMqTopicConfigurator _topic;
 
         public ActiveMqMessagePublishTopology(IActiveMqPublishTopology publishTopology, IMessageTopology<TMessage> messageTopology)
+            : base(publishTopology)
         {
             var topicName = $"{publishTopology.VirtualTopicPrefix}{messageTopology.EntityName}";
 
@@ -45,6 +46,9 @@ namespace MassTransit.ActiveMqTransport.Topology
 
         public void Apply(IPublishEndpointBrokerTopologyBuilder builder)
         {
+            if (Exclude)
+                return;
+
             builder.Topic = builder.CreateTopic(_topic.EntityName, _topic.Durable, _topic.AutoDelete);
 
             // this was disabled previously, so not sure if it can be added

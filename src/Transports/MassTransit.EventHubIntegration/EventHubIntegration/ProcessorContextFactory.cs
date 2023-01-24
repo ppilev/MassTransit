@@ -6,8 +6,6 @@ namespace MassTransit.EventHubIntegration
     using Agents;
     using Azure.Messaging.EventHubs;
     using Azure.Messaging.EventHubs.Processor;
-    using Azure.Storage.Blobs;
-    using Configuration;
     using Internals;
     using MassTransit.Configuration;
 
@@ -15,24 +13,19 @@ namespace MassTransit.EventHubIntegration
     public class ProcessorContextFactory :
         IPipeContextFactory<ProcessorContext>
     {
-        readonly Func<IStorageSettings, BlobContainerClient> _blobContainerClientFactory;
-        readonly Func<IHostSettings, BlobContainerClient, EventProcessorClient> _clientFactory;
+        readonly Func<EventProcessorClient> _clientFactory;
         readonly IConnectionContextSupervisor _contextSupervisor;
         readonly IHostConfiguration _hostConfiguration;
         readonly Func<PartitionClosingEventArgs, Task> _partitionClosingHandler;
         readonly Func<PartitionInitializingEventArgs, Task> _partitionInitializingHandler;
-        readonly ReceiveSettings _receiveSettings;
 
         public ProcessorContextFactory(IConnectionContextSupervisor contextSupervisor, IHostConfiguration hostConfiguration,
-            ReceiveSettings receiveSettings, Func<IStorageSettings, BlobContainerClient> blobContainerClientFactory,
-            Func<IHostSettings, BlobContainerClient, EventProcessorClient> clientFactory,
+            Func<EventProcessorClient> clientFactory,
             Func<PartitionClosingEventArgs, Task> partitionClosingHandler,
             Func<PartitionInitializingEventArgs, Task> partitionInitializingHandler)
         {
             _contextSupervisor = contextSupervisor;
             _hostConfiguration = hostConfiguration;
-            _receiveSettings = receiveSettings;
-            _blobContainerClientFactory = blobContainerClientFactory;
             _clientFactory = clientFactory;
             _partitionClosingHandler = partitionClosingHandler;
             _partitionInitializingHandler = partitionInitializingHandler;
@@ -65,9 +58,8 @@ namespace MassTransit.EventHubIntegration
         {
             Task<ProcessorContext> Create(ConnectionContext connectionContext, CancellationToken createCancellationToken)
             {
-                var blobContainerClient = _blobContainerClientFactory(connectionContext.StorageSettings);
-                var client = _clientFactory(connectionContext.HostSettings, blobContainerClient);
-                ProcessorContext context = new EventHubProcessorContext(_hostConfiguration, _receiveSettings, blobContainerClient,
+                var client = _clientFactory();
+                ProcessorContext context = new EventHubProcessorContext(_hostConfiguration,
                     client, _partitionInitializingHandler, _partitionClosingHandler, createCancellationToken);
                 return Task.FromResult(context);
             }

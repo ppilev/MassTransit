@@ -3,11 +3,15 @@
     public class SqlServerLockStatementProvider :
         SqlLockStatementProvider
     {
-        const string DefaultRowLockStatement = "SELECT * FROM {0}.{1} WITH (UPDLOCK, ROWLOCK) WHERE {2} = @p0";
         const string DefaultSchemaName = "dbo";
 
         public SqlServerLockStatementProvider(bool enableSchemaCaching = true)
-            : base(DefaultSchemaName, DefaultRowLockStatement, enableSchemaCaching)
+            : base(DefaultSchemaName, new SqlServerLockStatementFormatter(), enableSchemaCaching)
+        {
+        }
+
+        public SqlServerLockStatementProvider(string schemaName, bool enableSchemaCaching = true)
+            : base(schemaName, new SqlServerLockStatementFormatter(), enableSchemaCaching)
         {
         }
     }

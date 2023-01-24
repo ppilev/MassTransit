@@ -23,7 +23,6 @@
         SagaStateMachine<TInstance>
         where TInstance : class, SagaStateMachineInstance
     {
-        readonly Dictionary<string, Dictionary<string, List<EventActivityBinder<TInstance>>>> _compositeBindings;
         readonly HashSet<string> _compositeEvents;
         readonly Dictionary<string, StateMachineEvent<TInstance>> _eventCache;
         readonly Dictionary<Event, EventCorrelation> _eventCorrelations;
@@ -43,7 +42,6 @@
             _registrations = new Lazy<ConfigurationHelpers.StateMachineRegistration[]>(() => ConfigurationHelpers.GetRegistrations(this));
             _stateCache = new Dictionary<string, State<TInstance>>();
             _eventCache = new Dictionary<string, StateMachineEvent<TInstance>>();
-            _compositeBindings = new Dictionary<string, Dictionary<string, List<EventActivityBinder<TInstance>>>>();
             _compositeEvents = new HashSet<string>();
 
             _eventObservers = new EventObservable<TInstance>();
@@ -379,7 +377,8 @@
         /// <param name="propertyExpression">The containing property</param>
         /// <param name="eventPropertyExpression">The event property expression</param>
         /// <param name="configureEventCorrelation">Configuration callback for the event</param>
-        protected internal void Event<TProperty, T>(Expression<Func<TProperty>> propertyExpression, Expression<Func<TProperty, Event<T>>> eventPropertyExpression,
+        protected internal void Event<TProperty, T>(Expression<Func<TProperty>> propertyExpression,
+            Expression<Func<TProperty, Event<T>>> eventPropertyExpression,
             Action<IEventCorrelationConfigurator<TInstance, T>> configureEventCorrelation)
             where TProperty : class
             where T : class
@@ -473,7 +472,7 @@
         /// <typeparam name="T">The event data type</typeparam>
         /// <param name="name">The event name (must be unique)</param>
         /// <param name="configure">Configuration callback method</param>
-        protected Event<T> Event<T>(string name, Action<IEventCorrelationConfigurator<TInstance, T>> configure)
+        protected internal Event<T> Event<T>(string name, Action<IEventCorrelationConfigurator<TInstance, T>> configure)
             where T : class
         {
             Event<T> @event = Event<T>(name);
@@ -497,7 +496,8 @@
         /// <param name="propertyExpression">The composite event</param>
         /// <param name="trackingPropertyExpression">The property in the instance used to track the state of the composite event</param>
         /// <param name="events">The events that must be raised before the composite event is raised</param>
-        protected internal Event CompositeEvent(Expression<Func<Event>> propertyExpression, Expression<Func<TInstance, CompositeEventStatus>> trackingPropertyExpression,
+        protected internal Event CompositeEvent(Expression<Func<Event>> propertyExpression,
+            Expression<Func<TInstance, CompositeEventStatus>> trackingPropertyExpression,
             params Event[] events)
         {
             return CompositeEvent(propertyExpression, trackingPropertyExpression, CompositeEventOptions.None, events);
@@ -512,7 +512,8 @@
         /// <param name="trackingPropertyExpression">The property in the instance used to track the state of the composite event</param>
         /// <param name="options">Options on the composite event</param>
         /// <param name="events">The events that must be raised before the composite event is raised</param>
-        protected internal Event CompositeEvent(Expression<Func<Event>> propertyExpression, Expression<Func<TInstance, CompositeEventStatus>> trackingPropertyExpression,
+        protected internal Event CompositeEvent(Expression<Func<Event>> propertyExpression,
+            Expression<Func<TInstance, CompositeEventStatus>> trackingPropertyExpression,
             CompositeEventOptions options, params Event[] events)
         {
             var trackingPropertyInfo = trackingPropertyExpression.GetPropertyInfo();
@@ -560,7 +561,8 @@
             return CompositeEvent(name, trackingPropertyExpression, CompositeEventOptions.None, events);
         }
 
-        protected internal Event CompositeEvent(string name, Expression<Func<TInstance, CompositeEventStatus>> trackingPropertyExpression, CompositeEventOptions options,
+        protected internal Event CompositeEvent(string name, Expression<Func<TInstance, CompositeEventStatus>> trackingPropertyExpression,
+            CompositeEventOptions options,
             params Event[] events)
         {
             return CompositeEvent(name, new StructCompositeEventStatusAccessor<TInstance>(trackingPropertyExpression.GetPropertyInfo()), options, events);
@@ -676,23 +678,9 @@
 
                 foreach (State<TInstance> state in states)
                 {
-                    // Set the IsComposite flag just to make sure it is really set.
-                    var currentEvent = state.Events.FirstOrDefault(x => Equals(x, @event));
-                    if (currentEvent != null)
-                        _compositeEvents.Add(currentEvent.Name);
-
-                    // Determine which event the composited event belongs to
-                    State<TInstance> boundToState = _stateCache.Values.FirstOrDefault(s => s.Events.Any(evt => evt.Name == events[i].Name));
-                    State<TInstance> bindingState = boundToState ?? state;
-
-                    if (!_compositeBindings.ContainsKey(@event.Name))
-                        _compositeBindings[@event.Name] = new Dictionary<string, List<EventActivityBinder<TInstance>>>();
-
-                    if (!_compositeBindings[@event.Name].ContainsKey(bindingState.Name))
-                        _compositeBindings[@event.Name][bindingState.Name] = new List<EventActivityBinder<TInstance>>();
-
-                    if (_compositeBindings[@event.Name][bindingState.Name].All(x => x.Event.Name != events[i].Name))
-                        _compositeBindings[@event.Name][bindingState.Name].Add(When(events[i]).Execute(activity));
+                    During(state,
+                        When(events[i])
+                            .Execute(activity));
                 }
             }
 
@@ -960,23 +948,7 @@
             State<TInstance> activityState = GetState(state.Name);
 
             foreach (IActivityBinder<TInstance> activity in eventActivities)
-            {
                 activity.Bind(activityState);
-                if (!_compositeEvents.Contains(activity.Event.Name) || !_compositeBindings.ContainsKey(activity.Event.Name))
-                    continue;
-
-                foreach (KeyValuePair<string, List<EventActivityBinder<TInstance>>> compositeBinding in _compositeBindings[activity.Event.Name])
-                {
-                    IActivityBinder<TInstance>[] activitiesBinder = compositeBinding.Value.SelectMany(x => x.GetStateActivityBinders()).ToArray();
-
-                    if (!activitiesBinder.Any())
-                        continue;
-
-                    BindActivitiesToState(GetState(compositeBinding.Key), activitiesBinder);
-                }
-
-                _compositeBindings.Remove(activity.Event.Name);
-            }
         }
 
         /// <summary>
@@ -1462,7 +1434,8 @@
         /// <param name="propertyExpression">The request property on the state machine</param>
         /// <param name="requestIdExpression">The property where the requestId is stored</param>
         /// <param name="settings">The request settings (which can be read from configuration, etc.)</param>
-        protected internal void Request<TRequest, TResponse, TResponse2>(Expression<Func<Request<TInstance, TRequest, TResponse, TResponse2>>> propertyExpression,
+        protected internal void Request<TRequest, TResponse, TResponse2>(
+            Expression<Func<Request<TInstance, TRequest, TResponse, TResponse2>>> propertyExpression,
             Expression<Func<TInstance, Guid?>> requestIdExpression, RequestSettings settings)
             where TRequest : class
             where TResponse : class
@@ -1503,7 +1476,8 @@
         /// <typeparam name="TResponse2">The alternate response type</typeparam>
         /// <param name="propertyExpression">The request property on the state machine</param>
         /// <param name="settings">The request settings (which can be read from configuration, etc.)</param>
-        protected internal void Request<TRequest, TResponse, TResponse2>(Expression<Func<Request<TInstance, TRequest, TResponse, TResponse2>>> propertyExpression,
+        protected internal void Request<TRequest, TResponse, TResponse2>(
+            Expression<Func<Request<TInstance, TRequest, TResponse, TResponse2>>> propertyExpression,
             RequestSettings settings)
             where TRequest : class
             where TResponse : class
@@ -1736,20 +1710,20 @@
                     {
                         Guid? tokenId = schedule.GetTokenId(context.Saga);
 
-                        if (context.TryGetPayload(out ConsumeContext consumeContext))
+                        Guid? messageTokenId = context.GetSchedulingTokenId();
+                        if (messageTokenId.HasValue)
                         {
-                            Guid? messageTokenId = consumeContext.GetSchedulingTokenId();
-                            if (messageTokenId.HasValue)
+                            if (!tokenId.HasValue || messageTokenId.Value != tokenId.Value)
                             {
-                                if (!tokenId.HasValue || messageTokenId.Value != tokenId.Value)
-                                {
-                                    LogContext.Debug?.Log("SAGA: {CorrelationId} Scheduled message not current: {TokenId}", context.Saga.CorrelationId,
-                                        messageTokenId.Value);
+                                LogContext.Debug?.Log("SAGA: {CorrelationId} Scheduled message not current: {TokenId}", context.Saga.CorrelationId,
+                                    messageTokenId.Value);
 
-                                    return;
-                                }
+                                return;
                             }
                         }
+
+                        if (!tokenId.HasValue)
+                            return;
 
                         BehaviorContext<TInstance, TMessage> eventContext = context.CreateProxy(schedule.Received, context.Message);
 
@@ -1821,9 +1795,21 @@
 
         static EventRegistration GetEventRegistration(Event @event, Type messageType)
         {
-            var registrationType = messageType.HasInterface<CorrelatedBy<Guid>>()
-                ? typeof(CorrelatedEventRegistration<>).MakeGenericType(typeof(TInstance), messageType)
-                : typeof(UncorrelatedEventRegistration<>).MakeGenericType(typeof(TInstance), messageType);
+            var isFault = messageType.ClosesType(typeof(Fault<>), out Type[] faultMessageType);
+
+            Type registrationType;
+            if (messageType.HasInterface<CorrelatedBy<Guid>>())
+            {
+                registrationType = isFault
+                    ? typeof(CorrelatedFaultEventRegistration<>).MakeGenericType(typeof(TInstance), faultMessageType[0])
+                    : typeof(CorrelatedEventRegistration<>).MakeGenericType(typeof(TInstance), messageType);
+            }
+            else
+            {
+                registrationType = isFault
+                    ? typeof(UncorrelatedFaultEventRegistration<>).MakeGenericType(typeof(TInstance), faultMessageType[0])
+                    : typeof(UncorrelatedEventRegistration<>).MakeGenericType(typeof(TInstance), messageType);
+            }
 
             return (EventRegistration)Activator.CreateInstance(registrationType, @event);
         }
@@ -2072,8 +2058,27 @@
 
             public void RegisterCorrelation(MassTransitStateMachine<TInstance> machine)
             {
-                var builderType = typeof(CorrelatedByEventCorrelationBuilder<,>).MakeGenericType(typeof(TInstance), typeof(TData));
-                var builder = (IEventCorrelationBuilder)Activator.CreateInstance(builderType, machine, _event);
+                var builder = new CorrelatedByEventCorrelationBuilder<TInstance, TData>(machine, _event);
+
+                machine._eventCorrelations[_event] = builder.Build();
+            }
+        }
+
+
+        class CorrelatedFaultEventRegistration<TData> :
+            EventRegistration
+            where TData : class, CorrelatedBy<Guid>
+        {
+            readonly Event<Fault<TData>> _event;
+
+            public CorrelatedFaultEventRegistration(Event<Fault<TData>> @event)
+            {
+                _event = @event;
+            }
+
+            public void RegisterCorrelation(MassTransitStateMachine<TInstance> machine)
+            {
+                var builder = new CorrelatedByFaultEventCorrelationBuilder<TInstance, TData>(machine, _event);
 
                 machine._eventCorrelations[_event] = builder.Build();
             }
@@ -2096,17 +2101,41 @@
                 if (GlobalTopology.Send.GetMessageTopology<TData>().TryGetConvention(out ICorrelationIdMessageSendTopologyConvention<TData> convention)
                     && convention.TryGetMessageCorrelationId(out IMessageCorrelationId<TData> messageCorrelationId))
                 {
-                    var builderType = typeof(MessageCorrelationIdEventCorrelationBuilder<,>).MakeGenericType(typeof(TInstance), typeof(TData));
-                    var builder = (IEventCorrelationBuilder)Activator.CreateInstance(builderType, machine, _event, messageCorrelationId);
+                    var builder = new MessageCorrelationIdEventCorrelationBuilder<TInstance, TData>(machine, _event, messageCorrelationId);
 
                     machine._eventCorrelations[_event] = builder.Build();
                 }
                 else
                 {
-                    var correlationType = typeof(UncorrelatedEventCorrelation<,>).MakeGenericType(typeof(TInstance), typeof(TData));
-                    var correlation = (EventCorrelation<TInstance, TData>)Activator.CreateInstance(correlationType, _event);
+                    machine._eventCorrelations[_event] = new UncorrelatedEventCorrelation<TInstance, TData>(_event);
+                }
+            }
+        }
 
-                    machine._eventCorrelations[_event] = correlation;
+
+        class UncorrelatedFaultEventRegistration<TData> :
+            EventRegistration
+            where TData : class
+        {
+            readonly Event<Fault<TData>> _event;
+
+            public UncorrelatedFaultEventRegistration(Event<Fault<TData>> @event)
+            {
+                _event = @event;
+            }
+
+            public void RegisterCorrelation(MassTransitStateMachine<TInstance> machine)
+            {
+                if (GlobalTopology.Send.GetMessageTopology<TData>().TryGetConvention(out ICorrelationIdMessageSendTopologyConvention<TData> convention)
+                    && convention.TryGetMessageCorrelationId(out IMessageCorrelationId<TData> messageCorrelationId))
+                {
+                    var builder = new MessageCorrelationIdFaultEventCorrelationBuilder<TInstance, TData>(machine, _event, messageCorrelationId);
+
+                    machine._eventCorrelations[_event] = builder.Build();
+                }
+                else
+                {
+                    machine._eventCorrelations[_event] = new UncorrelatedEventCorrelation<TInstance, Fault<TData>>(_event);
                 }
             }
         }

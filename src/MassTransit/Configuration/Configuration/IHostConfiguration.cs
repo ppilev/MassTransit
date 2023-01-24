@@ -23,6 +23,11 @@ namespace MassTransit.Configuration
         /// </summary>
         bool DeployTopologyOnly { get; set; }
 
+        /// <summary>
+        /// If true, the publish topology will be deployed at startup
+        /// </summary>
+        bool DeployPublishTopology { get; set; }
+
         ISendObserver SendObservers { get; }
 
         ILogContext? LogContext { get; set; }
@@ -32,6 +37,7 @@ namespace MassTransit.Configuration
         IBusTopology Topology { get; }
 
         IRetryPolicy ReceiveTransportRetryPolicy { get; }
+        IRetryPolicy SendTransportRetryPolicy { get; }
 
         /// <summary>
         /// Create a receive endpoint configuration

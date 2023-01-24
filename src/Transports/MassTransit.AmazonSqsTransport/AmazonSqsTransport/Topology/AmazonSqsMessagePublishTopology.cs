@@ -17,6 +17,7 @@ namespace MassTransit.AmazonSqsTransport.Topology
         readonly IAmazonSqsPublishTopology _publishTopology;
 
         public AmazonSqsMessagePublishTopology(IAmazonSqsPublishTopology publishTopology, IMessageTopology<TMessage> messageTopology)
+            : base(publishTopology)
         {
             _publishTopology = publishTopology;
 
@@ -59,6 +60,9 @@ namespace MassTransit.AmazonSqsTransport.Topology
 
         public void Apply(IPublishEndpointBrokerTopologyBuilder builder)
         {
+            if (Exclude)
+                return;
+
             var topicHandle = builder.CreateTopic(_amazonSqsTopic.EntityName, _amazonSqsTopic.Durable, _amazonSqsTopic.AutoDelete,
                 _publishTopology.TopicAttributes.MergeLeft(_amazonSqsTopic.TopicAttributes),
                 _publishTopology.TopicSubscriptionAttributes.MergeLeft(_amazonSqsTopic.TopicSubscriptionAttributes),

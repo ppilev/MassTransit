@@ -3,7 +3,6 @@ namespace MassTransit.DependencyInjection
     using System;
     using System.Threading.Tasks;
     using Context;
-    using Courier;
     using Microsoft.Extensions.DependencyInjection;
 
 
@@ -33,24 +32,25 @@ namespace MassTransit.DependencyInjection
             context.Add("provider", "dependencyInjection");
         }
 
-        static CompensateContext<TLog> PipeContextFactory(CompensateContext<TLog> consumeContext, IServiceScope serviceScope,
-            IScopeServiceProvider scopeServiceProvider)
+        static CompensateContext<TLog> PipeContextFactory(CompensateContext<TLog> consumeContext, IServiceScope serviceScope, IServiceProvider serviceProvider)
         {
-            return new CompensateContextScope<TLog>(consumeContext, serviceScope, serviceScope.ServiceProvider, scopeServiceProvider);
+            return new CompensateContextScope<TLog>(consumeContext, serviceScope, serviceScope.ServiceProvider, serviceProvider);
         }
 
-        static ICompensateScopeContext<TLog> ExistingScopeContextFactory(CompensateContext<TLog> consumeContext, IServiceScope serviceScope)
+        static ICompensateScopeContext<TLog> ExistingScopeContextFactory(CompensateContext<TLog> consumeContext, IServiceScope serviceScope,
+            IDisposable disposable)
         {
-            return new ExistingCompensateScopeContext<TLog>(consumeContext, serviceScope);
+            return new ExistingCompensateScopeContext<TLog>(consumeContext, serviceScope, disposable);
         }
 
-        static ICompensateScopeContext<TLog> CreatedScopeContextFactory(CompensateContext<TLog> consumeContext, IServiceScope serviceScope)
+        static ICompensateScopeContext<TLog> CreatedScopeContextFactory(CompensateContext<TLog> consumeContext, IServiceScope serviceScope,
+            IDisposable disposable)
         {
-            return new CreatedCompensateScopeContext<TLog>(serviceScope, consumeContext);
+            return new CreatedCompensateScopeContext<TLog>(serviceScope, consumeContext, disposable);
         }
 
         static ICompensateActivityScopeContext<TActivity, TLog> ExistingActivityScopeContextFactory(CompensateContext<TLog> consumeContext,
-            IServiceScope serviceScope)
+            IServiceScope serviceScope, IDisposable disposable)
         {
             var activity = serviceScope.ServiceProvider.GetService<TActivity>();
             if (activity == null)
@@ -58,11 +58,11 @@ namespace MassTransit.DependencyInjection
 
             CompensateActivityContext<TActivity, TLog> activityContext = consumeContext.CreateActivityContext(activity);
 
-            return new ExistingCompensateActivityScopeContext<TActivity, TLog>(activityContext, serviceScope);
+            return new ExistingCompensateActivityScopeContext<TActivity, TLog>(activityContext, serviceScope, disposable);
         }
 
         static ICompensateActivityScopeContext<TActivity, TLog> CreatedActivityScopeContextFactory(CompensateContext<TLog> consumeContext,
-            IServiceScope serviceScope)
+            IServiceScope serviceScope, IDisposable disposable)
         {
             var activity = serviceScope.ServiceProvider.GetService<TActivity>();
             if (activity == null)
@@ -70,7 +70,7 @@ namespace MassTransit.DependencyInjection
 
             CompensateActivityContext<TActivity, TLog> activityContext = consumeContext.CreateActivityContext(activity);
 
-            return new CreatedCompensateActivityScopeContext<TActivity, TLog>(activityContext, serviceScope);
+            return new CreatedCompensateActivityScopeContext<TActivity, TLog>(activityContext, serviceScope, disposable);
         }
     }
 }

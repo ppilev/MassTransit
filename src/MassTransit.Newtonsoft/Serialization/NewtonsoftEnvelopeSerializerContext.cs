@@ -35,6 +35,12 @@ namespace MassTransit.Serialization
 
             if (IsSupportedMessageType<T>())
             {
+                if (_message is T messageOfT)
+                {
+                    message = messageOfT;
+                    return true;
+                }
+
                 using var json = messageToken.CreateReader();
                 message = _deserializer.Deserialize<T>(json);
 
@@ -47,6 +53,12 @@ namespace MassTransit.Serialization
 
         public override bool TryGetMessage(Type messageType, out object? message)
         {
+            if (_message != null && messageType.IsInstanceOfType(_message))
+            {
+                message = _message;
+                return true;
+            }
+
             var messageToken = GetMessageToken(_message);
 
             using var reader = messageToken.CreateReader();

@@ -33,6 +33,8 @@ namespace MassTransit.KafkaIntegration.Configuration
             _configure = configure;
             _oAuthBearerTokenRefreshHandler = oAuthBearerTokenRefreshHandler;
             EndpointName = $"{KafkaTopicAddress.PathPrefix}/{_topicName}";
+            if (!string.IsNullOrWhiteSpace(_consumerConfig.GroupId))
+                EndpointName = $"{EndpointName}/{_consumerConfig.GroupId}";
         }
 
         public string EndpointName { get; }
@@ -40,11 +42,11 @@ namespace MassTransit.KafkaIntegration.Configuration
         public ReceiveEndpoint CreateReceiveEndpoint(IBusInstance busInstance)
         {
             var endpointConfiguration = busInstance.HostConfiguration.CreateReceiveEndpointConfiguration(EndpointName);
-            endpointConfiguration.ConnectReceiveEndpointObserver(_endpointObservers);
 
             var configurator = new KafkaTopicReceiveEndpointConfiguration<TKey, TValue>(_hostConfiguration, _consumerConfig, _topicName, busInstance,
-                endpointConfiguration, _headersDeserializer, _oAuthBearerTokenRefreshHandler);
-
+                endpointConfiguration, _oAuthBearerTokenRefreshHandler);
+            configurator.ConnectReceiveEndpointObserver(_endpointObservers);
+            configurator.SetHeadersDeserializer(_headersDeserializer);
             _configure?.Invoke(configurator);
 
             IReadOnlyList<ValidationResult> result = Validate().Concat(configurator.Validate())

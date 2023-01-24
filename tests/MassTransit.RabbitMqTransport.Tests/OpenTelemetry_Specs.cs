@@ -6,6 +6,7 @@ namespace MassTransit.RabbitMqTransport.Tests
     using Courier.Contracts;
     using HarnessContracts;
     using Initializers;
+    using Logging;
     using MassTransit.Testing;
     using Mediator;
     using Microsoft.Extensions.DependencyInjection;
@@ -14,6 +15,7 @@ namespace MassTransit.RabbitMqTransport.Tests
     using OpenTelemetry.Resources;
     using OpenTelemetry.Trace;
     using TestFramework.Courier;
+    using TestFramework.Messages;
 
 
     [TestFixture]
@@ -45,15 +47,117 @@ namespace MassTransit.RabbitMqTransport.Tests
 
             IRequestClient<SubmitOrder> client = harness.GetRequestClient<SubmitOrder>();
 
-            await client.GetResponse<OrderSubmitted>(new
+            await harness.Bus.Publish(new PingMessage());
+
+            StartedActivity? activity = LogContext.Current?.StartGenericActivity("api process");
+
+            activity?.Activity.SetBaggage("MyBag", "IsFull");
+
+            Response<OrderSubmitted> response = await client.GetResponse<OrderSubmitted>(new
             {
                 OrderId = InVar.Id,
                 OrderNumber = "123"
             });
 
+            activity?.Stop();
+
             Assert.IsTrue(await harness.Sent.Any<OrderSubmitted>());
 
             Assert.IsTrue(await harness.Consumed.Any<SubmitOrder>());
+
+            Assert.That(response.Headers.Get<string>("BaggageValue"), Is.EqualTo("IsFull"));
+        }
+
+        [Test]
+        public async Task Should_carry_the_baggage_with_newtonsoft()
+        {
+            using var tracerProvider = CreateTraceProvider("order-api");
+
+            var services = new ServiceCollection();
+
+            await using var provider = services
+                .AddMassTransitTestHarness(x =>
+                {
+                    x.AddConsumer<MonitoredSubmitOrderConsumer>();
+
+                    x.UsingRabbitMq((context, cfg) =>
+                    {
+                        cfg.UseNewtonsoftJsonSerializer();
+
+                        cfg.ConfigureEndpoints(context);
+                    });
+                })
+                .BuildServiceProvider(true);
+
+            var harness = provider.GetTestHarness();
+
+            await harness.Start();
+
+            IRequestClient<SubmitOrder> client = harness.GetRequestClient<SubmitOrder>();
+
+            await harness.Bus.Publish(new PingMessage());
+
+            StartedActivity? activity = LogContext.Current?.StartGenericActivity("api process");
+
+            activity?.Activity.SetBaggage("MyBag", "IsFull");
+
+            Response<OrderSubmitted> response = await client.GetResponse<OrderSubmitted>(new
+            {
+                OrderId = InVar.Id,
+                OrderNumber = "123"
+            });
+
+            activity?.Stop();
+
+            Assert.IsTrue(await harness.Sent.Any<OrderSubmitted>());
+
+            Assert.IsTrue(await harness.Consumed.Any<SubmitOrder>());
+
+            Assert.That(response.Headers.Get<string>("BaggageValue"), Is.EqualTo("IsFull"));
+        }
+
+        [Test]
+        public async Task Should_report_telemetry_to_jaeger_for_batch_consumer()
+        {
+            using var tracerProvider = CreateTraceProvider("order-api");
+
+            var services = new ServiceCollection();
+
+            await using var provider = services
+                .AddMassTransitTestHarness(x =>
+                {
+                    x.AddConsumer<BatchOrderSubmittedConsumer>(c =>
+                    {
+                        c.Options<BatchOptions>(options =>
+                        {
+                            options.MessageLimit = 1;
+                        });
+                    });
+
+                    x.UsingRabbitMq((context, cfg) =>
+                    {
+                        cfg.ConfigureEndpoints(context);
+                    });
+                })
+                .BuildServiceProvider(true);
+
+            var harness = provider.GetTestHarness();
+
+            await harness.Start();
+
+            StartedActivity? activity = LogContext.Current?.StartGenericActivity("api process");
+
+            await harness.Bus.Publish<OrderSubmitted>(new
+            {
+                OrderId = InVar.Id,
+                OrderNumber = "ORDER123"
+            });
+
+            activity?.Stop();
+
+            Assert.IsTrue(await harness.Consumed.Any<OrderSubmitted>());
+
+            await harness.Stop();
         }
 
         [Test]
@@ -258,7 +362,22 @@ namespace MassTransit.RabbitMqTransport.Tests
         {
             public Task Consume(ConsumeContext<SubmitOrder> context)
             {
-                return context.RespondAsync<OrderSubmitted>(context.Message);
+                var value = System.Diagnostics.Activity.Current?.GetBaggageItem("MyBag");
+
+                return context.RespondAsync<OrderSubmitted>(context.Message, x =>
+                {
+                    x.Headers.Set("BaggageValue", value);
+                });
+            }
+        }
+
+
+        class BatchOrderSubmittedConsumer :
+            IConsumer<MassTransit.Batch<OrderSubmitted>>
+        {
+            public Task Consume(ConsumeContext<MassTransit.Batch<OrderSubmitted>> context)
+            {
+                return Task.CompletedTask;
             }
         }
 

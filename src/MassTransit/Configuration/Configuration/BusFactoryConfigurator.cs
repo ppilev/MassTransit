@@ -39,6 +39,11 @@ namespace MassTransit.Configuration
             set => _busConfiguration.HostConfiguration.DeployTopologyOnly = value;
         }
 
+        public bool DeployPublishTopology
+        {
+            set => _busConfiguration.HostConfiguration.DeployPublishTopology = value;
+        }
+
         public int? ConcurrentMessageLimit
         {
             set => _busConfiguration.Transport.Configurator.ConcurrentMessageLimit = value;
@@ -243,7 +248,7 @@ namespace MassTransit.Configuration
 
         public void AddDeserializer(ISerializerFactory factory, bool isDefault = false)
         {
-            _busConfiguration.Serialization.AddDeserializer(factory);
+            _busConfiguration.Serialization.AddDeserializer(factory, isDefault);
         }
 
         public void ClearSerialization()

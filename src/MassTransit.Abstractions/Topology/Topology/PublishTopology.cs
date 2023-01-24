@@ -79,10 +79,25 @@ namespace MassTransit.Topology
             return _messageTypes.Values.SelectMany(x => x.Validate());
         }
 
+        IMessagePublishTopology IPublishTopology.GetMessageTopology(Type messageType)
+        {
+            return GetMessageTopology(messageType);
+        }
+
+        public IMessagePublishTopologyConfigurator GetMessageTopology(Type messageType)
+        {
+            if (MessageTypeCache.IsValidMessageType(messageType) == false)
+                throw new ArgumentException(MessageTypeCache.InvalidMessageTypeReason(messageType), nameof(messageType));
+
+            var topology = _messageTypes.GetOrAdd(messageType, CreateMessageType);
+
+            return topology;
+        }
+
         protected virtual IMessagePublishTopologyConfigurator CreateMessageTopology<T>(Type type)
             where T : class
         {
-            var messageTopology = new MessagePublishTopology<T>();
+            var messageTopology = new MessagePublishTopology<T>(this);
 
             var connector = new ImplementedMessageTypeConnector(this);
 
@@ -108,6 +123,12 @@ namespace MassTransit.Topology
             where T : class
         {
             _observers.MessageTopologyCreated(messageTopology);
+        }
+
+        protected void ForEachMessageType<T>(Action<T> callback)
+        {
+            foreach (T configurator in _messageTypes.Values)
+                callback(configurator);
         }
 
         void ApplyConventionsToMessageTopology<T>(IMessagePublishTopologyConfigurator<T> messageTopology)

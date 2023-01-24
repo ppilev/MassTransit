@@ -1,13 +1,11 @@
 namespace MassTransit.RedisIntegration.Saga
 {
-    using System;
-    using System.Text.Json;
-    using System.Threading;
-    using System.Threading.Tasks;
     using Metadata;
     using RetryPolicies;
-    using Serialization;
     using StackExchange.Redis;
+    using System;
+    using System.Threading;
+    using System.Threading.Tasks;
 
 
     public class RedisDatabaseContext<TSaga> :
@@ -28,23 +26,24 @@ namespace MassTransit.RedisIntegration.Saga
         public Task Add(SagaConsumeContext<TSaga> context)
         {
             var instance = context.Saga;
-
-            return Put(instance);
+            return Insert(context.SerializerContext, instance);
         }
 
-        public Task Insert(TSaga instance)
+        public Task Insert(IObjectDeserializer deserializer, TSaga instance)
         {
-            return Put(instance);
+            return instance is IRedisSagaKey redisSagaKey
+                ? Put(deserializer, instance, redisSagaKey.Key)
+                : Put(deserializer, instance, instance.CorrelationId.ToString());
         }
 
-        public Task<TSaga> Load(Guid correlationId)
+        public Task<TSaga> Load(IObjectDeserializer deserializer, Guid correlationId)
         {
-            return Get(correlationId);
+            return Get(deserializer, correlationId.ToString());
         }
 
-        public Task<TSaga> Load(string redisKey)
+        public Task<TSaga> Load(IObjectDeserializer deserializer, string redisKey)
         {
-            return Get(redisKey);
+            return Get(deserializer, redisKey);
         }
 
         public async Task Update(SagaConsumeContext<TSaga> context)
@@ -59,14 +58,15 @@ namespace MassTransit.RedisIntegration.Saga
             {
                 instance.Version++;
 
-                var existingInstance = instance is IRedisSagaKey redisSagaKey ?
-                    await Get(redisSagaKey.Key).ConfigureAwait(false) :
-                    await Get(instance.CorrelationId).ConfigureAwait(false);
+                var deserializer = context.SerializerContext;
+                var sagaKey = instance is IRedisSagaKey redisSagaKey ? redisSagaKey.Key : instance.CorrelationId.ToString();
+
+                var existingInstance = await Get(deserializer, sagaKey).ConfigureAwait(false);
 
                 if (existingInstance.Version >= instance.Version)
                     throw new RedisSagaConcurrencyException("Saga version conflict", typeof(TSaga), instance.CorrelationId);
 
-                await Put(instance).ConfigureAwait(false);
+                await Put(deserializer, instance, sagaKey).ConfigureAwait(false);
             }
             catch (Exception exception)
             {
@@ -81,7 +81,10 @@ namespace MassTransit.RedisIntegration.Saga
 
         public Task Delete(SagaConsumeContext<TSaga> context)
         {
-            return Delete(context.Saga.CorrelationId);
+            var instance = context.Saga;
+            var sagaKey = instance is IRedisSagaKey redisSagaKey ? redisSagaKey.Key : instance.CorrelationId.ToString();
+
+            return Delete(sagaKey);
         }
 
         public ValueTask DisposeAsync()
@@ -112,33 +115,21 @@ namespace MassTransit.RedisIntegration.Saga
             return sagaLock.Lock(cancellationToken);
         }
 
-        public async Task<TSaga> Get(Guid correlationId)
+        async Task<TSaga> Get(IObjectDeserializer deserializer, string sagaKey)
         {
-            var value = await _database.StringGetAsync(_options.FormatSagaKey(correlationId)).ConfigureAwait(false);
+            var value = await _database.StringGetAsync(_options.FormatSagaKey(sagaKey)).ConfigureAwait(false);
 
-            return value.IsNullOrEmpty ? null : JsonSerializer.Deserialize<TSaga>(value, SystemTextJsonMessageSerializer.Options);
+            return value.IsNullOrEmpty ? null : deserializer.DeserializeObject<TSaga>(value.ToString());
         }
 
-        public async Task<TSaga> Get(string redisKey)
+        Task Put(IObjectDeserializer deserializer, TSaga instance, string sagaKey)
         {
-            var value = await _database.StringGetAsync(_options.FormatSagaKey(redisKey)).ConfigureAwait(false);
-
-            return value.IsNullOrEmpty ? null : JsonSerializer.Deserialize<TSaga>(value, SystemTextJsonMessageSerializer.Options);
+            return _database.StringSetAsync(_options.FormatSagaKey(sagaKey), deserializer.SerializeObject(instance).GetString(), _options.Expiry);
         }
 
-        Task Put(TSaga instance)
+        Task Delete(string sagaKey)
         {
-            var sagaKey = instance is IRedisSagaKey redisSagaKey ?
-                _options.FormatSagaKey(redisSagaKey.Key) :
-                _options.FormatSagaKey(instance.CorrelationId);
-
-            return _database.StringSetAsync(sagaKey,
-                JsonSerializer.Serialize(instance, SystemTextJsonMessageSerializer.Options), _options.Expiry);
-        }
-
-        Task Delete(Guid correlationId)
-        {
-            return _database.KeyDeleteAsync(_options.FormatSagaKey(correlationId));
+            return _database.KeyDeleteAsync(_options.FormatSagaKey(sagaKey));
         }
 
 

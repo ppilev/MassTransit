@@ -3,10 +3,8 @@ namespace MassTransit.Serialization
 {
     using System;
     using System.Collections.Generic;
-    using System.Linq;
     using System.Reflection;
     using Context;
-    using Metadata;
 
 
     public class BodyConsumeContext :
@@ -43,9 +41,7 @@ namespace MassTransit.Serialization
                     return existing != null;
             }
 
-            var typeUrn = MessageUrn.ForTypeString(messageType);
-
-            return SerializerContext.SupportedMessageTypes.Any(x => typeUrn.Equals(x, StringComparison.OrdinalIgnoreCase));
+            return SerializerContext.IsSupportedMessageType(messageType);
         }
 
         public override bool TryGetMessage<T>(out ConsumeContext<T>? message)
@@ -62,9 +58,7 @@ namespace MassTransit.Serialization
                 {
                     if (SerializerContext.IsSupportedMessageType<T>())
                     {
-                        var messageType = TypeMetadataCache<T>.ImplementationType;
-
-                        if (SerializerContext.TryGetMessage(messageType, out var messageObj))
+                        if (SerializerContext.TryGetMessage(typeof(T), out var messageObj))
                         {
                             _messageTypes[typeof(T)] = message = new MessageConsumeContext<T>(this, ((T)messageObj)!);
                             return true;

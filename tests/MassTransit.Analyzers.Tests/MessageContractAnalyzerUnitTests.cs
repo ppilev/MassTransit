@@ -475,6 +475,38 @@ namespace ConsoleApplication1
         }
 
         [Test]
+        public void WhenGetResponseTypesAreStructurallyCompatibleAndMissingProperty_ShouldHaveDiagnostic()
+        {
+            var test = Usings + MessageContracts + @"
+namespace ConsoleApplication1
+{
+    class Program
+    {
+        static async Task Main()
+        {
+            var bus = Bus.Factory.CreateUsingInMemory(cfg => { });
+            var requestClient = bus.CreateRequestClient<CheckOrderStatus>(null);
+
+                var response = await requestClient.GetResponse<OrderStatusResult>(new {});
+                var result = response.Message;
+        }
+    }
+}
+";
+            var expected = new DiagnosticResult
+            {
+                Id = "MCA0003",
+                Message =
+                    "Anonymous type is missing properties that are in the message contract 'CheckOrderStatus'. The following properties are missing: OrderId.",
+                Severity = DiagnosticSeverity.Info,
+                Locations =
+                    new[] { new DiagnosticResultLocation("Test0.cs", 59, 83) }
+            };
+
+            VerifyCSharpDiagnostic(test, expected);
+        }
+
+        [Test]
         public void WhenCreateRequestTypesAreStructurallyCompatibleAndMissingProperty_ShouldHaveTheNoDiagnostic()
         {
             var test = Usings + GenericMessageContracts + @"
@@ -810,7 +842,6 @@ namespace ConsoleApplication1
 
             await bus.Publish<OrderSubmitted>(new
             {
-                }
             });
         }
     }
@@ -824,6 +855,40 @@ namespace ConsoleApplication1
                 Severity = DiagnosticSeverity.Info,
                 Locations =
                     new[] { new DiagnosticResultLocation("Test0.cs", 58, 47) }
+            };
+
+            VerifyCSharpDiagnostic(test, expected);
+        }
+
+        [Test]
+        public void WhenSendExtensionMethodUsedInConsumer_ShouldHaveDiagnostic()
+        {
+            var test = Usings + MessageContracts + @"
+namespace ConsoleApplication1
+{
+    class SubmitOrderConsumer :
+        IConsumer<SubmitOrder>
+    {
+        public async Task Consume(ConsumeContext<SubmitOrder> context)
+        {
+            Uri address = null;
+            await context.Send<OrderSubmitted>(address, new
+            {
+                Id = context.Message.Id,
+                CustomerId = context.Message.CustomerId,
+            });
+        }
+    }
+}
+";
+            var expected = new DiagnosticResult
+            {
+                Id = "MCA0003",
+                Message =
+                    "Anonymous type is missing properties that are in the message contract 'OrderSubmitted'. The following properties are missing: OrderItems.",
+                Severity = DiagnosticSeverity.Info,
+                Locations =
+                    new[] { new DiagnosticResultLocation("Test0.cs", 58, 57) }
             };
 
             VerifyCSharpDiagnostic(test, expected);
@@ -956,6 +1021,51 @@ namespace ConsoleApplication1
                 Id = NewId.NextGuid(),
                 CustomerId = ""Customer"",
                 OrderItems = Array.Empty<Guid>()
+            });
+        }
+    }
+}
+";
+
+            VerifyCSharpDiagnostic(test);
+        }
+
+        [Test]
+        public void WhenMessageDataTypesAreStructurallyCompatible_ShouldHaveNoDiagnostics()
+        {
+            var test = Usings + @"
+namespace ConsoleApplication1
+{
+    public class DataMessage
+    {
+        public Guid CorrelationId { get; set; }
+        public MessageData<DataDictionary> Dictionary { get; set; }
+    }
+
+    public class DataDictionary
+    {
+        public Dictionary<string, string> Values { get; set; }
+    }
+
+    class Program
+    {
+        static async Task Main()
+        {
+            var bus = Bus.Factory.CreateUsingInMemory(cfg => { });
+
+            var dataDictionary = new DataDictionary()
+            {
+                Values = new Dictionary<string, string>()
+                {
+                    { ""First"", ""1st"" },
+                    { ""Second"", ""2nd"" }
+                }
+            };
+
+            await bus.Publish<DataMessage>(new
+            {
+                CorrelationId = NewId.NextGuid(),
+                Dictionary = dataDictionary
             });
         }
     }
@@ -2179,6 +2289,78 @@ namespace ConsoleApplication1
 ";
             VerifyCSharpFix(test, fixtest);
         }
+
+        [Test]
+        public void WhenActivatingGenericContractAreStructurallyCompatibleAndMissingProperty_ShouldHaveDiagnosticAndCodeFix_1()
+        {
+            var test = Usings + @"
+namespace ConsoleApplication1
+{
+    public interface INotification
+    {
+        public Guid StreamId { get; }
+    }
+
+    public interface IProjectionUpdatedNotification : INotification
+    {
+    }
+
+    class Program
+    {
+        static async Task Main()
+        {
+            var message = new { StreamId = Guid.NewGuid() };
+
+            await PublishNotification<IProjectionUpdatedNotification>(message);
+        }
+
+        private static Task PublishNotification<T>(object message) where T : class, INotification
+        {
+            var bus = Bus.Factory.CreateUsingInMemory(cfg => { });
+
+            return bus.Publish<T>(message);
+        }
+    }
+";
+
+            VerifyCSharpDiagnostic(test);
+        }
+
+        [Test]
+        public void WhenActivatingGenericContractAreStructurallyCompatibleAndMissingProperty_ShouldHaveDiagnosticAndCodeFix_2()
+        {
+            var test = Usings + @"
+namespace ConsoleApplication1
+{
+    public interface INotification
+    {
+        public Guid StreamId { get; }
+    }
+
+    public interface INotified {}
+
+    public class NotificationConsumer : IConsumer<INotification>
+    {
+        public Task Consume(ConsumeContext context)
+        {
+            var message = new {};
+
+            return context.PublishBack<INotified>(message);
+        }
+    }
+
+    public static class Extensions
+    {
+        public static Task PublishBack<TMessage>(this ConsumeContext context, object message) where TMessage : class
+        {
+            return context.Publish<TMessage>(message);
+        }
+    }
+";
+
+            VerifyCSharpDiagnostic(test);
+        }
+
 
         readonly string Usings = @"
 using System;

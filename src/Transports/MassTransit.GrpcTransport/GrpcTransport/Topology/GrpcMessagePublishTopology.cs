@@ -16,7 +16,8 @@ namespace MassTransit.GrpcTransport.Topology
         readonly IList<IGrpcMessagePublishTopology> _implementedMessageTypes;
         readonly IMessageTopology<TMessage> _messageTopology;
 
-        public GrpcMessagePublishTopology(IMessageTopology<TMessage> messageTopology)
+        public GrpcMessagePublishTopology(IPublishTopology publishTopology, IMessageTopology<TMessage> messageTopology)
+            : base(publishTopology)
         {
             _messageTopology = messageTopology;
             _implementedMessageTypes = new List<IGrpcMessagePublishTopology>();
@@ -26,6 +27,9 @@ namespace MassTransit.GrpcTransport.Topology
 
         public void Apply(IMessageFabricPublishTopologyBuilder builder)
         {
+            if (Exclude)
+                return;
+
             var exchangeName = _messageTopology.EntityName;
 
             builder.ExchangeDeclare(exchangeName, ExchangeType);
@@ -44,9 +48,7 @@ namespace MassTransit.GrpcTransport.Topology
 
         public override bool TryGetPublishAddress(Uri baseAddress, out Uri? publishAddress)
         {
-            var exchangeName = _messageTopology.EntityName;
-
-            publishAddress = new GrpcEndpointAddress(new GrpcHostAddress(baseAddress), exchangeName, exchangeType: ExchangeType);
+            publishAddress = new GrpcEndpointAddress(new GrpcHostAddress(baseAddress), _messageTopology.EntityName, exchangeType: ExchangeType);
             return true;
         }
 

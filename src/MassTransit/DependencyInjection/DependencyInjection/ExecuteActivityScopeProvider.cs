@@ -3,7 +3,6 @@ namespace MassTransit.DependencyInjection
     using System;
     using System.Threading.Tasks;
     using Context;
-    using Courier;
     using Microsoft.Extensions.DependencyInjection;
 
 
@@ -34,23 +33,25 @@ namespace MassTransit.DependencyInjection
         }
 
         static ExecuteContext<TArguments> PipeContextFactory(ExecuteContext<TArguments> consumeContext, IServiceScope serviceScope,
-            IScopeServiceProvider scopeServiceProvider)
+            IServiceProvider serviceProvider)
         {
-            return new ExecuteContextScope<TArguments>(consumeContext, serviceScope, serviceScope.ServiceProvider, scopeServiceProvider);
+            return new ExecuteContextScope<TArguments>(consumeContext, serviceScope, serviceScope.ServiceProvider, serviceProvider);
         }
 
-        static IExecuteScopeContext<TArguments> ExistingScopeContextFactory(ExecuteContext<TArguments> consumeContext, IServiceScope serviceScope)
+        static IExecuteScopeContext<TArguments> ExistingScopeContextFactory(ExecuteContext<TArguments> consumeContext, IServiceScope serviceScope,
+            IDisposable disposable)
         {
-            return new ExistingExecuteScopeContext<TArguments>(consumeContext, serviceScope);
+            return new ExistingExecuteScopeContext<TArguments>(consumeContext, serviceScope, disposable);
         }
 
-        static IExecuteScopeContext<TArguments> CreatedScopeContextFactory(ExecuteContext<TArguments> consumeContext, IServiceScope serviceScope)
+        static IExecuteScopeContext<TArguments> CreatedScopeContextFactory(ExecuteContext<TArguments> consumeContext, IServiceScope serviceScope,
+            IDisposable disposable)
         {
-            return new CreatedExecuteScopeContext<TArguments>(consumeContext, serviceScope);
+            return new CreatedExecuteScopeContext<TArguments>(consumeContext, serviceScope, disposable);
         }
 
         static IExecuteActivityScopeContext<TActivity, TArguments> ExistingActivityScopeContextFactory(ExecuteContext<TArguments> consumeContext,
-            IServiceScope serviceScope)
+            IServiceScope serviceScope, IDisposable disposable)
         {
             var activity = serviceScope.ServiceProvider.GetService<TActivity>();
             if (activity == null)
@@ -58,11 +59,11 @@ namespace MassTransit.DependencyInjection
 
             ExecuteActivityContext<TActivity, TArguments> activityContext = consumeContext.CreateActivityContext(activity);
 
-            return new ExistingExecuteActivityScopeContext<TActivity, TArguments>(activityContext, serviceScope);
+            return new ExistingExecuteActivityScopeContext<TActivity, TArguments>(activityContext, serviceScope, disposable);
         }
 
         static IExecuteActivityScopeContext<TActivity, TArguments> CreatedActivityScopeContextFactory(ExecuteContext<TArguments> consumeContext,
-            IServiceScope serviceScope)
+            IServiceScope serviceScope, IDisposable disposable)
         {
             var activity = serviceScope.ServiceProvider.GetService<TActivity>();
             if (activity == null)
@@ -70,7 +71,7 @@ namespace MassTransit.DependencyInjection
 
             ExecuteActivityContext<TActivity, TArguments> activityContext = consumeContext.CreateActivityContext(activity);
 
-            return new CreatedExecuteActivityScopeContext<TActivity, TArguments>(activityContext, serviceScope);
+            return new CreatedExecuteActivityScopeContext<TActivity, TArguments>(activityContext, serviceScope, disposable);
         }
     }
 }

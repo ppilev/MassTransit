@@ -1,79 +1,49 @@
 namespace MassTransit.EventHubIntegration
 {
     using System;
-    using System.Threading;
     using System.Threading.Tasks;
     using Configuration;
-    using MassTransit.Configuration;
     using Observables;
     using Transports;
-    using Util;
 
 
     public class EventHubProducerProvider :
         IEventHubProducerProvider
     {
         readonly IBusInstance _busInstance;
+        readonly IEventHubProducerCache<Uri> _cache;
         readonly IEventHubHostConfiguration _hostConfiguration;
         readonly SendObservable _sendObservable;
-        readonly ISendPipe _sendPipe;
-        readonly ISerialization _serializers;
 
-        public EventHubProducerProvider(IEventHubHostConfiguration hostConfiguration, IBusInstance busInstance, ISendPipe sendPipe,
-            SendObservable sendObservable, ISerialization serializers)
+        public EventHubProducerProvider(IEventHubHostConfiguration hostConfiguration, IBusInstance busInstance)
         {
             _hostConfiguration = hostConfiguration;
             _busInstance = busInstance;
-            _sendPipe = sendPipe;
-            _sendObservable = sendObservable;
-            _serializers = serializers;
+            _cache = new EventHubProducerCache<Uri>();
+            _sendObservable = new SendObservable();
         }
 
         public Task<IEventHubProducer> GetProducer(Uri address)
         {
-            var context = new EventHubTransportContext(_hostConfiguration, _sendPipe, _busInstance.HostConfiguration, address, _serializers);
-
-            if (_sendObservable.Count > 0)
-                context.ConnectSendObserver(_sendObservable);
-
-            IEventHubProducer eventHubProducer = new EventHubProducer(context);
-            return Task.FromResult(eventHubProducer);
+            return _cache.GetProducer(address, CreateProducer);
         }
 
-
-        class EventHubTransportContext :
-            BaseSendTransportContext,
-            EventHubSendTransportContext
+        public ConnectHandle ConnectSendObserver(ISendObserver observer)
         {
-            readonly IHostConfiguration _configuration;
-            readonly Recycle<IProducerContextSupervisor> _producerContextSupervisor;
+            return _sendObservable.Connect(observer);
+        }
 
-            public EventHubTransportContext(IEventHubHostConfiguration hostConfiguration, ISendPipe sendPipe,
-                IHostConfiguration configuration, Uri endpointAddress, ISerialization serialization)
-                : base(configuration, serialization)
-            {
-                _configuration = configuration;
-                SendPipe = sendPipe;
-                EndpointAddress = new EventHubEndpointAddress(HostAddress, endpointAddress);
-                _producerContextSupervisor =
-                    new Recycle<IProducerContextSupervisor>(() =>
-                        new ProducerContextSupervisor(hostConfiguration.ConnectionContextSupervisor, EndpointAddress.EventHubName, serialization));
-            }
+        Task<IEventHubProducer> CreateProducer(Uri address)
+        {
+            var topicAddress = NormalizeAddress(_busInstance.HostConfiguration.HostAddress, address);
+            var transportContext = _hostConfiguration.CreateSendTransportContext(topicAddress.EventHubName, _busInstance);
+            IEventHubProducer producer = new EventHubProducer(transportContext, transportContext.ConnectSendObserver(_sendObservable));
+            return Task.FromResult(producer);
+        }
 
-            public Uri HostAddress => _configuration.HostAddress;
-
-            public EventHubEndpointAddress EndpointAddress { get; }
-
-            public ISendPipe SendPipe { get; }
-
-            public Task Send(IPipe<ProducerContext> pipe, CancellationToken cancellationToken)
-            {
-                var supervisor = _producerContextSupervisor.Supervisor;
-                return _configuration.Retry(() => supervisor.Send(pipe, cancellationToken), supervisor, cancellationToken);
-            }
-
-            public override string EntityName => EndpointAddress.EventHubName;
-            public override string ActivitySystem => "event-hub";
+        static EventHubEndpointAddress NormalizeAddress(Uri hostAddress, Uri address)
+        {
+            return new EventHubEndpointAddress(hostAddress, address);
         }
     }
 }

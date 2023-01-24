@@ -7,6 +7,7 @@ namespace MassTransit.Context
     using System.Threading.Tasks;
     using Events;
     using Metadata;
+    using Middleware;
     using Transports;
 
 
@@ -171,7 +172,7 @@ namespace MassTransit.Context
         {
             var sendEndpoint = await ReceiveContext.SendEndpointProvider.GetSendEndpoint(address).ConfigureAwait(false);
 
-            return new ConsumeSendEndpoint(sendEndpoint, this, RequestId);
+            return new ConsumeSendEndpoint(sendEndpoint, this);
         }
 
         public virtual Task NotifyConsumed<T>(ConsumeContext<T> context, TimeSpan duration, string consumerType)
@@ -183,7 +184,15 @@ namespace MassTransit.Context
         public virtual async Task NotifyFaulted<T>(ConsumeContext<T> context, TimeSpan duration, string consumerType, Exception exception)
             where T : class
         {
-            await GenerateFault(context, exception).ConfigureAwait(false);
+            switch (exception)
+            {
+                case OperationCanceledException canceledException when canceledException.CancellationToken == context.CancellationToken:
+                    break;
+
+                default:
+                    await GenerateFault(context, exception).ConfigureAwait(false);
+                    break;
+            }
 
             await ReceiveContext.NotifyFaulted(context, duration, consumerType, exception).ConfigureAwait(false);
         }
@@ -257,7 +266,7 @@ namespace MassTransit.Context
 
                 var faultPipe = new FaultPipe<T>(context);
 
-                var faultContext = context.SkipOutbox();
+                var faultContext = InternalOutboxExtensions.SkipOutbox(context);
 
                 var faultEndpoint = await faultContext.GetFaultEndpoint<T>().ConfigureAwait(false);
 
@@ -276,7 +285,7 @@ namespace MassTransit.Context
         {
             var publishSendEndpoint = await base.GetPublishSendEndpoint<T>().ConfigureAwait(false);
 
-            return new ConsumeSendEndpoint(publishSendEndpoint, this, RequestId);
+            return new ConsumeSendEndpoint(publishSendEndpoint, this);
         }
 
 

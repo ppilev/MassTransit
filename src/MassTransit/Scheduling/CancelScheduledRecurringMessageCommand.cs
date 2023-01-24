@@ -6,6 +6,10 @@ namespace MassTransit.Scheduling
     public class CancelScheduledRecurringMessageCommand :
         CancelScheduledRecurringMessage
     {
+        public CancelScheduledRecurringMessageCommand()
+        {
+        }
+
         public CancelScheduledRecurringMessageCommand(string scheduleId, string scheduleGroup)
         {
             CorrelationId = NewId.NextGuid();
@@ -15,9 +19,9 @@ namespace MassTransit.Scheduling
             ScheduleGroup = scheduleGroup;
         }
 
-        public Guid CorrelationId { get; }
-        public DateTime Timestamp { get; }
-        public string ScheduleId { get; }
-        public string ScheduleGroup { get; }
+        public Guid CorrelationId { get; set; }
+        public DateTime Timestamp { get; set; }
+        public string ScheduleId { get; set; }
+        public string ScheduleGroup { get; set; }
     }
 }

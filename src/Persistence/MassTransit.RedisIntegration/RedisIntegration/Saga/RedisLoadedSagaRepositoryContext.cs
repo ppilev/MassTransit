@@ -44,7 +44,7 @@
         {
             try
             {
-                await _context.Insert(instance).ConfigureAwait(false);
+                await _context.Insert(_consumeContext.SerializerContext, instance).ConfigureAwait(false);
 
                 _consumeContext.LogInsert<TSaga, TMessage>(instance.CorrelationId);
 

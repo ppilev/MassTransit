@@ -9,16 +9,16 @@ namespace MassTransit.Transports
 
     public static class HostConfigurationRetryExtensions
     {
-        public static async Task Retry(this IHostConfiguration hostConfiguration, Func<Task> factory, ISupervisor supervisor,
-            CancellationToken cancellationToken)
+        public static async Task Retry(this IHostConfiguration hostConfiguration, Func<Task> factory, CancellationToken cancellationToken,
+            CancellationToken stoppingToken)
         {
             var description = hostConfiguration.HostAddress;
 
-            using var tokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, supervisor.Stopping);
+            using var tokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, stoppingToken);
 
             var stoppingContext = new SupervisorStoppingContext(tokenSource.Token);
 
-            RetryPolicyContext<SupervisorStoppingContext> policyContext = hostConfiguration.ReceiveTransportRetryPolicy.CreatePolicyContext(stoppingContext);
+            RetryPolicyContext<SupervisorStoppingContext> policyContext = hostConfiguration.SendTransportRetryPolicy.CreatePolicyContext(stoppingContext);
 
             try
             {
@@ -31,11 +31,17 @@ namespace MassTransit.Transports
                         if (retryContext?.Delay != null)
                             await Task.Delay(retryContext.Delay.Value, tokenSource.Token).ConfigureAwait(false);
 
-                        if (tokenSource.Token.IsCancellationRequested)
-                            throw new ConnectionException($"The connection is stopping and cannot be used: {description}", retryContext?.Exception);
+                        if (stoppingToken.IsCancellationRequested)
+                            throw new ConnectionException($"The transport is stopping and cannot be used: {description}", retryContext?.Exception);
+                        if (cancellationToken.IsCancellationRequested)
+                            cancellationToken.ThrowIfCancellationRequested();
 
                         await factory().ConfigureAwait(false);
                         return;
+                    }
+                    catch (OperationCanceledException exception) when (exception.CancellationToken == stoppingToken)
+                    {
+                        throw new ConnectionException($"The transport is stopping and cannot be used: {description}", retryContext?.Exception);
                     }
                     catch (OperationCanceledException)
                     {
@@ -67,7 +73,10 @@ namespace MassTransit.Transports
                     }
                 }
 
-                throw new ConnectionException($"The connection is stopping and cannot be used: {description}", retryContext?.Exception);
+                if (cancellationToken.IsCancellationRequested)
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                throw new ConnectionException($"The transport is stopping and cannot be used: {description}", retryContext?.Exception);
             }
             finally
             {

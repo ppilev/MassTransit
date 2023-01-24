@@ -1,5 +1,6 @@
 ﻿namespace MassTransit.DependencyInjection
 {
+    using System;
     using System.Threading.Tasks;
     using Microsoft.Extensions.DependencyInjection;
 
@@ -7,16 +8,19 @@
     public class ExistingConsumeScopeContext :
         IConsumeScopeContext
     {
-        public ExistingConsumeScopeContext(ConsumeContext context)
+        readonly IDisposable _disposable;
+
+        public ExistingConsumeScopeContext(ConsumeContext context, IDisposable disposable)
         {
+            _disposable = disposable;
             Context = context;
         }
 
         public ConsumeContext Context { get; }
 
-        public ValueTask DisposeAsync()
+        public async ValueTask DisposeAsync()
         {
-            return default;
+            _disposable?.Dispose();
         }
     }
 
@@ -25,17 +29,19 @@
         IConsumeScopeContext<TMessage>
         where TMessage : class
     {
+        readonly IDisposable _disposable;
         readonly IServiceScope _scope;
 
-        public ExistingConsumeScopeContext(ConsumeContext<TMessage> context, IServiceScope scope)
+        public ExistingConsumeScopeContext(ConsumeContext<TMessage> context, IServiceScope scope, IDisposable disposable)
         {
             Context = context;
             _scope = scope;
+            _disposable = disposable;
         }
 
-        public ValueTask DisposeAsync()
+        public async ValueTask DisposeAsync()
         {
-            return default;
+            _disposable?.Dispose();
         }
 
         public T GetService<T>()
@@ -44,7 +50,17 @@
             return ActivatorUtilities.GetServiceOrCreateInstance<T>(_scope.ServiceProvider);
         }
 
+        public T CreateInstance<T>(params object[] arguments)
+            where T : class
+        {
+            return ActivatorUtilities.CreateInstance<T>(_scope.ServiceProvider, arguments);
+        }
+
+        public IDisposable PushConsumeContext(ConsumeContext context)
+        {
+            return _scope.SetCurrentConsumeContext(context);
+        }
+
         public ConsumeContext<TMessage> Context { get; }
     }
-
 }

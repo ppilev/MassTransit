@@ -46,53 +46,58 @@ namespace MassTransit.DependencyInjection
             return await factory.Execute(asyncMethod, cancellationToken).ConfigureAwait(false);
         }
 
-        Task Send<T>(ConsumeContext<T> context, Func<ConsumeContext<T>, ISagaRepositoryContextFactory<TSaga>, Task> send)
+        async Task Send<T>(ConsumeContext<T> context, Func<ConsumeContext<T>, ISagaRepositoryContextFactory<TSaga>, Task> send)
             where T : class
         {
             var serviceProvider = context.GetPayload(_serviceProvider);
 
+            IDisposable disposable = null;
+
             if (context.TryGetPayload<IServiceScope>(out var existingScope))
             {
-                existingScope.SetCurrentConsumeContext(context);
+                disposable = existingScope.SetCurrentConsumeContext(context);
 
-                context.GetOrAddPayload(() => existingScope.ServiceProvider.GetService<IStateMachineActivityFactory>()
-                    ?? DependencyInjectionStateMachineActivityFactory.Instance);
-
-                var factory = existingScope.ServiceProvider.GetRequiredService<ISagaRepositoryContextFactory<TSaga>>();
-
-                return send(context, factory);
-            }
-
-            async Task CreateScope()
-            {
-                var serviceScope = serviceProvider.CreateScope();
                 try
                 {
-                    var scopeServiceProvider = new DependencyInjectionScopeServiceProvider(serviceScope.ServiceProvider);
-
-                    var scopeContext = new ConsumeContextScope<T>(context, serviceScope, serviceScope.ServiceProvider, scopeServiceProvider);
-
-                    serviceScope.SetCurrentConsumeContext(scopeContext);
-
-                    var activityFactory = serviceScope.ServiceProvider.GetService<IStateMachineActivityFactory>()
-                        ?? DependencyInjectionStateMachineActivityFactory.Instance;
-
-                    var consumeContextScope = new ConsumeContextScope<T>(scopeContext, activityFactory);
-
-                    var factory = serviceScope.ServiceProvider.GetRequiredService<ISagaRepositoryContextFactory<TSaga>>();
-
-                    await send(consumeContextScope, factory).ConfigureAwait(false);
+                    var factory = existingScope.ServiceProvider.GetRequiredService<ISagaRepositoryContextFactory<TSaga>>();
+                    await send(context, factory).ConfigureAwait(false);
                 }
                 finally
                 {
-                    if (serviceScope is IAsyncDisposable asyncDisposable)
-                        await asyncDisposable.DisposeAsync().ConfigureAwait(false);
-                    else
-                        serviceScope.Dispose();
+                    disposable.Dispose();
                 }
+
+                return;
             }
 
-            return CreateScope();
+            var serviceScope = serviceProvider.CreateScope();
+            try
+            {
+                var scopeContext = new ConsumeContextScope<T>(context, serviceScope, serviceScope.ServiceProvider);
+
+                if (scopeContext.TryGetPayload(out MessageSchedulerContext schedulerContext))
+                {
+                    scopeContext.AddOrUpdatePayload<MessageSchedulerContext>(
+                        () => new ConsumeMessageSchedulerContext(scopeContext, schedulerContext.SchedulerFactory),
+                        existing => new ConsumeMessageSchedulerContext(scopeContext, existing.SchedulerFactory));
+                }
+
+                disposable = serviceScope.SetCurrentConsumeContext(scopeContext);
+
+                var consumeContextScope = new ConsumeContextScope<T>(scopeContext);
+
+                var factory = serviceScope.ServiceProvider.GetRequiredService<ISagaRepositoryContextFactory<TSaga>>();
+
+                await send(consumeContextScope, factory).ConfigureAwait(false);
+            }
+            finally
+            {
+                disposable?.Dispose();
+                if (serviceScope is IAsyncDisposable asyncDisposable)
+                    await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+                else
+                    serviceScope.Dispose();
+            }
         }
     }
 }

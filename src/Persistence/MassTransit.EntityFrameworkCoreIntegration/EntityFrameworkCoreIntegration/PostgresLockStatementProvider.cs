@@ -4,10 +4,14 @@ namespace MassTransit.EntityFrameworkCoreIntegration
         SqlLockStatementProvider
     {
         const string DefaultSchemaName = "public";
-        const string DefaultRowLockStatement = "SELECT * FROM \"{0}\".\"{1}\" WHERE \"{2}\" = @p0 FOR UPDATE";
 
         public PostgresLockStatementProvider(bool enableSchemaCaching = true)
-            : base(DefaultSchemaName, DefaultRowLockStatement, enableSchemaCaching)
+            : base(DefaultSchemaName, new PostgresLockStatementFormatter(), enableSchemaCaching)
+        {
+        }
+
+        public PostgresLockStatementProvider(string schemaName, bool enableSchemaCaching = true)
+            : base(schemaName, new PostgresLockStatementFormatter(), enableSchemaCaching)
         {
         }
     }

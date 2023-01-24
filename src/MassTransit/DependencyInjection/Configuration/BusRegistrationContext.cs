@@ -78,6 +78,7 @@ namespace MassTransit.Configuration
                 .ToList();
 
             var endpointsWithName = Selector.GetRegistrations<IEndpointRegistration>(this)
+                .Where(x => registrationFilter.Matches(x) && !WasConfigured(x.Type))
                 .Select(x => x.GetDefinition(this))
                 .Select(x => new
                 {
@@ -161,7 +162,8 @@ namespace MassTransit.Configuration
                             {
                                 configurator.ReceiveEndpoint(compensateDefinition, endpointNameFormatter, compensateEndpointConfigurator =>
                                 {
-                                    configureReceiveEndpoint.Configure(compensateDefinition.GetEndpointName(endpointNameFormatter), cfg);
+                                    configureReceiveEndpoint.Configure(compensateDefinition.GetEndpointName(endpointNameFormatter),
+                                        compensateEndpointConfigurator);
 
                                     ConfigureActivity(activity.ActivityType, cfg, compensateEndpointConfigurator);
                                 });
@@ -170,7 +172,7 @@ namespace MassTransit.Configuration
                             {
                                 configurator.ReceiveEndpoint(compensateEndpointName, compensateEndpointConfigurator =>
                                 {
-                                    configureReceiveEndpoint.Configure(compensateEndpointName, cfg);
+                                    configureReceiveEndpoint.Configure(compensateEndpointName, compensateEndpointConfigurator);
 
                                     ConfigureActivity(activity.ActivityType, cfg, compensateEndpointConfigurator);
                                 });

@@ -13,7 +13,7 @@ namespace MassTransit.Mediator.Contexts
 
 
     public class MediatorSendEndpoint :
-        ISendEndpoint,
+        ITransportSendEndpoint,
         IPublishEndpointProvider,
         ISendEndpointProvider
     {
@@ -63,6 +63,11 @@ namespace MassTransit.Mediator.Contexts
             where T : class
         {
             return Task.FromResult<ISendEndpoint>(_publishSendEndpoint);
+        }
+
+        public Task<ISendEndpoint> GetSendEndpoint(Uri address)
+        {
+            return Task.FromResult<ISendEndpoint>(address.Equals(_sourceAddress) ? _sourceEndpoint : this);
         }
 
         public ConnectHandle ConnectSendObserver(ISendObserver observer)
@@ -183,9 +188,16 @@ namespace MassTransit.Mediator.Contexts
             await SendMessage(message, sendPipe, cancellationToken).ConfigureAwait(false);
         }
 
-        public Task<ISendEndpoint> GetSendEndpoint(Uri address)
+        public async Task<SendContext<T>> CreateSendContext<T>(T message, IPipe<SendContext<T>> pipe, CancellationToken cancellationToken)
+            where T : class
         {
-            return Task.FromResult<ISendEndpoint>(address.Equals(_sourceAddress) ? _sourceEndpoint : this);
+            LogContext.SetCurrentIfNull(_logContext);
+
+            var context = new MessageSendContext<T>(message, cancellationToken);
+
+            await pipe.Send(context).ConfigureAwait(false);
+
+            return context;
         }
 
         async Task SendMessage<T>(T message, IPipe<SendContext<T>> pipe, CancellationToken cancellationToken)
@@ -197,7 +209,7 @@ namespace MassTransit.Mediator.Contexts
 
             await pipe.Send(context).ConfigureAwait(false);
 
-            var receiveContext = new MediatorReceiveContext<T>(context, this, this, _publishTopology, _receiveObservers, _objectDeserializer, cancellationToken)
+            var receiveContext = new MediatorReceiveContext<T>(context, this, this, _publishTopology, _receiveObservers, _objectDeserializer)
             {
                 IsDelivered = context.IsPublish && !context.Mandatory
             };

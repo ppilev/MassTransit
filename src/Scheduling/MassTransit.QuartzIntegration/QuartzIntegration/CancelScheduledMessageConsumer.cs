@@ -19,27 +19,24 @@ namespace MassTransit.QuartzIntegration
         public async Task Consume(ConsumeContext<CancelScheduledMessage> context)
         {
             var correlationId = context.Message.TokenId.ToString("N");
-
-            var jobKey = new JobKey(correlationId);
+            var triggerKey = new TriggerKey(correlationId);
 
             var scheduler = await _schedulerFactory.GetScheduler(context.CancellationToken).ConfigureAwait(false);
 
-            var deletedJob = await scheduler.DeleteJob(jobKey, context.CancellationToken).ConfigureAwait(false);
+            var unscheduleJob = await scheduler.UnscheduleJob(triggerKey, context.CancellationToken).ConfigureAwait(false);
 
-            if (deletedJob)
-                LogContext.Debug?.Log("Canceled Scheduled Message: {Id} at {Timestamp}", jobKey, context.Message.Timestamp);
+            if (unscheduleJob)
+                LogContext.Debug?.Log("Canceled Scheduled Message: {Id} at {Timestamp}", triggerKey, context.Message.Timestamp);
             else
-                LogContext.Debug?.Log("CancelScheduledMessage: no message found for {Id}", jobKey);
+                LogContext.Debug?.Log("CancelScheduledMessage: no message found for {Id}", triggerKey);
         }
 
         public async Task Consume(ConsumeContext<CancelScheduledRecurringMessage> context)
         {
-            const string prependedValue = "Recurring.Trigger.";
-
             var scheduleId = context.Message.ScheduleId;
 
-            if (!scheduleId.StartsWith(prependedValue))
-                scheduleId = string.Concat(prependedValue, scheduleId);
+            if (!scheduleId.StartsWith(QuartzConstants.RecurringTriggerPrefix))
+                scheduleId = string.Concat(QuartzConstants.RecurringTriggerPrefix, scheduleId);
 
             var scheduler = await _schedulerFactory.GetScheduler(context.CancellationToken).ConfigureAwait(false);
 

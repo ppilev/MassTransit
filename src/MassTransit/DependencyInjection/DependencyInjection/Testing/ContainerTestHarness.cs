@@ -2,7 +2,6 @@ namespace MassTransit.DependencyInjection.Testing
 {
     using System;
     using System.Collections.Generic;
-    using System.Diagnostics;
     using System.Linq;
     using System.Threading;
     using System.Threading.Tasks;
@@ -10,6 +9,7 @@ namespace MassTransit.DependencyInjection.Testing
     using MassTransit.Testing.Implementations;
     using Microsoft.Extensions.DependencyInjection;
     using Microsoft.Extensions.Hosting;
+    using Microsoft.Extensions.Options;
 
 
     public class ContainerTestHarness :
@@ -31,11 +31,14 @@ namespace MassTransit.DependencyInjection.Testing
         IEnumerable<IHostedService> _hostedServices;
         CancellationTokenRegistration _registration;
 
-        public ContainerTestHarness(IServiceProvider provider)
+        public ContainerTestHarness(IServiceProvider provider, IOptions<TestHarnessOptions> options)
         {
             _provider = provider;
 
             _handles = new List<ConnectHandle>(5);
+
+            TestTimeout = options.Value.TestTimeout;
+            TestInactivityTimeout = options.Value.TestInactivityTimeout;
 
             _inactivityObserver = new Lazy<AsyncInactivityObserver>(() => new AsyncInactivityObserver(TestInactivityTimeout, CancellationToken));
 
@@ -45,6 +48,8 @@ namespace MassTransit.DependencyInjection.Testing
             _sent = new Lazy<BusTestSendObserver>(() => new BusTestSendObserver(TestTimeout, TestInactivityTimeout, InactivityToken));
 
             _scope = new Lazy<IServiceScope>(() => _provider.CreateScope());
+
+            provider.GetService<TestActivityListener>();
         }
 
         public async ValueTask DisposeAsync()
@@ -163,17 +168,18 @@ namespace MassTransit.DependencyInjection.Testing
             return provider.GetSendEndpoint(shortName);
         }
 
-        public Task Start()
+        public async Task Start()
         {
-            _hostedServices = _provider.GetServices<IHostedService>();
+            _hostedServices = _provider.GetServices<IHostedService>().ToArray();
             if (_hostedServices == null)
                 throw new ConfigurationException("The MassTransit hosted service was not found.");
 
-            return Task.WhenAll(_hostedServices.Select(x => x.StartAsync(CancellationToken)));
+            foreach (var service in _hostedServices)
+                await service.StartAsync(CancellationToken).ConfigureAwait(false);
         }
 
-        public TimeSpan TestTimeout { get; set; } = Debugger.IsAttached ? TimeSpan.FromMinutes(50) : TimeSpan.FromSeconds(30);
-        public TimeSpan TestInactivityTimeout { get; set; } = TimeSpan.FromSeconds(1.2);
+        public TimeSpan TestTimeout { get; set; }
+        public TimeSpan TestInactivityTimeout { get; set; }
 
         /// <summary>
         /// CancellationToken that is cancelled when the test inactivity timeout has elapsed with no bus activity

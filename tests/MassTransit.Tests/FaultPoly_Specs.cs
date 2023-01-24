@@ -2,7 +2,6 @@ namespace MassTransit.Tests
 {
     using System.Threading.Tasks;
     using FaultMessages;
-    using Metadata;
     using NUnit.Framework;
     using TestFramework;
 
@@ -64,7 +63,14 @@ namespace MassTransit.Tests
 
     namespace FaultMessages
     {
-        public interface MemberUpdateCommand
+        [ExcludeFromTopology]
+        public interface ICommand
+        {
+        }
+
+
+        public interface MemberUpdateCommand :
+            ICommand
         {
             string MemberName { get; }
         }

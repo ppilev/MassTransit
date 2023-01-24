@@ -53,6 +53,25 @@
             return FormatSubscriptionName(string.IsNullOrWhiteSpace(hostScope) ? entityName : $"{entityName}-{hostScope}");
         }
 
+        IServiceBusMessagePublishTopologyConfigurator IServiceBusPublishTopologyConfigurator.GetMessageTopology(Type messageType)
+        {
+            return GetMessageTopology(messageType) as IServiceBusMessagePublishTopologyConfigurator;
+        }
+
+        public BrokerTopology GetPublishBrokerTopology()
+        {
+            var builder = new PublishEndpointBrokerTopologyBuilder(this);
+
+            ForEachMessageType<IServiceBusMessagePublishTopology>(x =>
+            {
+                x.Apply(builder);
+
+                builder.Topic = null;
+            });
+
+            return builder.BuildBrokerTopology();
+        }
+
         IServiceBusMessagePublishTopologyConfigurator<T> IServiceBusPublishTopologyConfigurator.GetMessageTopology<T>()
         {
             return GetMessageTopology<T>() as IServiceBusMessagePublishTopologyConfigurator<T>;
@@ -60,7 +79,7 @@
 
         protected override IMessagePublishTopologyConfigurator CreateMessageTopology<T>(Type type)
         {
-            var messageTopology = new ServiceBusMessagePublishTopology<T>(_messageTopology.GetMessageTopology<T>(), this);
+            var messageTopology = new ServiceBusMessagePublishTopology<T>(this, _messageTopology.GetMessageTopology<T>());
 
             var connector = new ImplementedMessageTypeConnector<T>(this, messageTopology);
 

@@ -5,25 +5,21 @@ namespace MassTransit.EventHubIntegration.Checkpoints
     using System.Threading;
     using System.Threading.Channels;
     using System.Threading.Tasks;
-    using Azure.Messaging.EventHubs.Processor;
     using Internals;
-    using Util;
 
 
     public class BatchCheckpointer :
         ICheckpointer
     {
-        readonly CancellationTokenSource _cancellationTokenSource;
         readonly Channel<IPendingConfirmation> _channel;
         readonly Task _checkpointTask;
-        readonly ChannelExecutor _executor;
         readonly ReceiveSettings _settings;
-        readonly CancellationTokenSource _shutdownTokenSource;
+        readonly CancellationToken _cancellationToken;
 
-        public BatchCheckpointer(ChannelExecutor executor, ReceiveSettings settings)
+        public BatchCheckpointer(ReceiveSettings settings, CancellationToken cancellationToken)
         {
-            _executor = executor;
             _settings = settings;
+            _cancellationToken = cancellationToken;
             var channelOptions = new BoundedChannelOptions(settings.CheckpointMessageLimit)
             {
                 AllowSynchronousContinuations = false,
@@ -34,8 +30,6 @@ namespace MassTransit.EventHubIntegration.Checkpoints
 
             _channel = Channel.CreateBounded<IPendingConfirmation>(channelOptions);
             _checkpointTask = Task.Run(WaitForBatch);
-            _cancellationTokenSource = new CancellationTokenSource();
-            _shutdownTokenSource = new CancellationTokenSource();
         }
 
         public async Task Pending(IPendingConfirmation confirmation)
@@ -43,26 +37,18 @@ namespace MassTransit.EventHubIntegration.Checkpoints
             await _channel.Writer.WriteAsync(confirmation).ConfigureAwait(false);
         }
 
-        public async Task Close(ProcessingStoppedReason stoppedReason)
+        public async ValueTask DisposeAsync()
         {
             _channel.Writer.Complete();
 
-            if (stoppedReason != ProcessingStoppedReason.Shutdown)
-                _cancellationTokenSource.Cancel();
-
-            _shutdownTokenSource.Cancel();
-
             await _checkpointTask.ConfigureAwait(false);
-
-            _cancellationTokenSource.Dispose();
-            _shutdownTokenSource.Dispose();
         }
 
         async Task WaitForBatch()
         {
             try
             {
-                while (await _channel.Reader.WaitToReadAsync(_cancellationTokenSource.Token).ConfigureAwait(false))
+                while (await _channel.Reader.WaitToReadAsync(_cancellationToken).ConfigureAwait(false))
                     await ReadBatch().ConfigureAwait(false);
             }
             catch (OperationCanceledException)
@@ -80,8 +66,8 @@ namespace MassTransit.EventHubIntegration.Checkpoints
         async Task ReadBatch()
         {
             var timeoutToken = new CancellationTokenSource(_settings.CheckpointInterval);
-            var batchToken = CancellationTokenSource.CreateLinkedTokenSource(timeoutToken.Token, _cancellationTokenSource.Token, _shutdownTokenSource.Token);
-            var batch = new List<IPendingConfirmation>();
+            var batchToken = CancellationTokenSource.CreateLinkedTokenSource(timeoutToken.Token, _cancellationToken);
+            var batch = new List<IPendingConfirmation>(_settings.CheckpointMessageCount);
 
             try
             {
@@ -91,7 +77,7 @@ namespace MassTransit.EventHubIntegration.Checkpoints
                     {
                         var confirmation = await _channel.Reader.ReadAsync(batchToken.Token).ConfigureAwait(false);
 
-                        await confirmation.Confirmed.OrCanceled(_shutdownTokenSource.Token).ConfigureAwait(false);
+                        await confirmation.Confirmed.OrCanceled(_cancellationToken).ConfigureAwait(false);
 
                         batch.Add(confirmation);
 
@@ -99,11 +85,11 @@ namespace MassTransit.EventHubIntegration.Checkpoints
                             break;
                     }
                 }
-                catch (OperationCanceledException exception) when (exception.CancellationToken == batchToken.Token && batch.Count > 0)
+                catch (Exception) when (batch.Count > 0)
                 {
                 }
 
-                await _executor.Run(() => Checkpoint(batch)).ConfigureAwait(false);
+                await Checkpoint(batch).ConfigureAwait(false);
             }
             catch (OperationCanceledException exception) when (exception.CancellationToken == batchToken.Token)
             {
@@ -134,14 +120,14 @@ namespace MassTransit.EventHubIntegration.Checkpoints
 
         async Task<bool> TryCheckpoint(IPendingConfirmation confirmation)
         {
-            _cancellationTokenSource.Token.ThrowIfCancellationRequested();
+            _cancellationToken.ThrowIfCancellationRequested();
 
             LogContext.Debug?.Log("Partition: {PartitionId} updating checkpoint with offset: {Offset}", confirmation.Partition.PartitionId,
                 confirmation.Offset);
 
             try
             {
-                await confirmation.Checkpoint(_cancellationTokenSource.Token).ConfigureAwait(false);
+                await confirmation.Checkpoint(_cancellationToken).ConfigureAwait(false);
                 return true;
             }
             catch (Exception exception)

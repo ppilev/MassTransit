@@ -1,7 +1,6 @@
 namespace MassTransit.RabbitMqTransport.Middleware
 {
     using System.Threading.Tasks;
-    using Topology;
     using Transports;
 
 
@@ -29,6 +28,9 @@ namespace MassTransit.RabbitMqTransport.Middleware
         {
             var receiveSettings = context.GetPayload<ReceiveSettings>();
 
+            if (string.IsNullOrWhiteSpace(_consumerTag) && !string.IsNullOrWhiteSpace(receiveSettings.ConsumerTag))
+                _consumerTag = receiveSettings.ConsumerTag;
+
             var consumer = new RabbitMqBasicConsumer(context, _context);
 
             _consumerTag = await context.BasicConsume(receiveSettings.QueueName, receiveSettings.NoAck, _context.ExclusiveConsumer,
@@ -49,8 +51,7 @@ namespace MassTransit.RabbitMqTransport.Middleware
                 RabbitMqDeliveryMetrics metrics = consumer;
                 await _context.TransportObservers.NotifyCompleted(_context.InputAddress, metrics).ConfigureAwait(false);
 
-                LogContext.Debug?.Log("Consumer completed {ConsumerTag}: {DeliveryCount} received, {ConcurrentDeliveryCount} concurrent", metrics.ConsumerTag,
-                    metrics.DeliveryCount, metrics.ConcurrentDeliveryCount);
+                _context.LogConsumerCompleted(metrics.DeliveryCount, metrics.ConcurrentDeliveryCount, metrics.ConsumerTag);
             }
 
             await next.Send(context).ConfigureAwait(false);
