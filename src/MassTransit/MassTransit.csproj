@@ -5,20 +5,20 @@
     <TargetFrameworks>netstandard2.0;netstandard2.1;net6.0</TargetFrameworks>
   </PropertyGroup>
 
-  <PropertyGroup Condition=" '$(IsWindows)' == 'true' ">
-    <TargetFrameworks>$(TargetFrameworks);net461</TargetFrameworks>
-  </PropertyGroup>
+  <!--<PropertyGroup Condition=" '$(IsWindows)' == 'true' ">
+    <TargetFrameworks>$(TargetFrameworks);net462</TargetFrameworks>
+  </PropertyGroup>-->
 
  <PropertyGroup>
     <PackageTags>MassTransit</PackageTags>
     <Description>$(Description)</Description>
   </PropertyGroup>
 
-  <ItemGroup Condition=" '$(TargetFramework)' == 'net461'">
+  <!--<ItemGroup Condition=" '$(TargetFramework)' == 'net462'">
     <Reference Include="System.Transactions" />
-    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="6.0.0" />
-    <PackageReference Include="System.Threading.Tasks.Extensions" Version="4.5.4" />
-  </ItemGroup>
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" />
+    <PackageReference Include="System.Threading.Tasks.Extensions" />
+  </ItemGroup>-->
 
   <ItemGroup Condition=" '$(TargetFramework)' != 'net461'">
     <PackageReference Include="System.Reflection.Emit.Lightweight" Version="4.7.0" />
